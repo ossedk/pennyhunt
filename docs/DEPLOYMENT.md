@@ -80,30 +80,21 @@ queue/cache, `BROADCAST_CONNECTION=reverb` (PHP posts to `127.0.0.1:8080`),
 `PENNYHUNT_ML_PYTHON=/home/forge/venvs/pennyhunt/bin/python`. The `APP_KEY`
 matches local so restored encrypted data stays readable.
 
+### Websockets (live UI updates)
+
+**DONE 2026-07-04:** nginx proxies `location ~ ^/app/` to Reverb on
+`127.0.0.1:8080` (added via Forge → site → Edit Nginx Configuration).
+Verified: `wss://pennyhunt.wecode.dev/app/{key}` completes the HTTP/1.1
+upgrade handshake (101). Note when testing with curl: force `--http1.1` —
+over HTTP/2 there is no `Upgrade` header and Reverb answers 500, which is
+expected and irrelevant to browsers (websockets always negotiate over
+HTTP/1.1).
+
 ## Known gaps / follow-ups
 
-1. **Browser websockets (live UI updates) need one manual Forge step.**
-   Client Echo is built to connect to `wss://pennyhunt.wecode.dev:443`, but
-   nginx does not yet proxy websockets to Reverb. In Forge → site → Edit
-   Nginx Configuration, add inside the `server` block (or as a
-   `forge-conf/.../server/*` include):
-
-   ```nginx
-   location ~ ^/app/ {
-       proxy_http_version 1.1;
-       proxy_set_header Host $http_host;
-       proxy_set_header X-Real-IP $remote_addr;
-       proxy_set_header Upgrade $http_upgrade;
-       proxy_set_header Connection "Upgrade";
-       proxy_pass http://127.0.0.1:8080;
-   }
-   ```
-
-   Until then the app works fully; pages just don't live-refresh (Echo
-   fails to connect silently).
-2. **MySQL still runs** (Forge default) but is unused — can be disabled
+1. **MySQL still runs** (Forge default) but is unused — can be disabled
    from the Forge UI to reclaim ~400 MB RAM.
-3. Postgres backups: no automated dump yet. Add a nightly
+2. Postgres backups: no automated dump yet. Add a nightly
    `pg_dump -Fc` cron to `~/backups` (and ideally off-box).
-4. `REDDIT_CLIENT_ID/SECRET` and `FMP_API_KEY` are blank in prod (same as
+3. `REDDIT_CLIENT_ID/SECRET` and `FMP_API_KEY` are blank in prod (same as
    local) — Reddit flows through Apify, so nothing is broken.
