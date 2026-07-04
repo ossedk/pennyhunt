@@ -424,6 +424,19 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   open / pre-market / after-hours / closed as a `MarketStatusBadge` on
   the ticker page, signal cockpit and blotter, so quotes and unrealized
   P&L are always read with session context.
+- ✅ **The Desk + global search + news + on-demand X (2026-07-05)** — new
+  landing dashboard (`/dashboard`, also `/`): LLM-written market brief
+  (`MarketBriefWriter`, closed-world context from our own aggregates,
+  structured JSON out, symbol-bound watch items, hourly via
+  `GenerateMarketBrief` + on-demand when stale), regime strip, tape
+  movers among socially-active names, crowd-volume leaders, loudest
+  posts, open risk, and attention-ranked news. Polygon news persisted in
+  `ticker_news` (lazy 6h sync per ticker page view + hourly
+  `SyncTrendingNews` for top-25 mentioned). Global Cmd+K ticker search
+  (`/search`: exact symbol → prefix → name, tiers broken by 24h mention
+  volume). `PullTwitterForTicker` refreshes the X tape on ticker-page
+  views and exact search hits (30m cooldown, ~$0.016/pull, analytics
+  quarantine still applies). Plan: `docs/plans/2026-07-05-desk-dashboard.md`.
 - ▶️ Forward paper-trade of the calibrated p ≥ 0.124 tier (v3 discipline:
   next-open entry, 10% stop, no take, day-5 time exit) — **now running
   automatically via the trade engine**; every future trade-tier signal

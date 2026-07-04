@@ -47,6 +47,19 @@ class PolygonClient
         return $this->get('/v1/marketstatus/now')?->json();
     }
 
+    /** @return array<int, array<string, mixed>> news `results` list, newest first */
+    public function news(string $symbol, int $limit = 10): array
+    {
+        $response = $this->get('/v2/reference/news', [
+            'ticker' => strtoupper($symbol),
+            'order' => 'desc',
+            'sort' => 'published_utc',
+            'limit' => $limit,
+        ]);
+
+        return $response?->json('results') ?? [];
+    }
+
     /** @param array<string, mixed> $query */
     protected function get(string $path, array $query = []): ?Response
     {

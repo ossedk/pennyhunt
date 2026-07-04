@@ -1,5 +1,5 @@
 import { Link } from '@inertiajs/react';
-import { Activity, FlaskConical, Radar, Rss, Server, Star } from 'lucide-react';
+import { Activity, FlaskConical, LayoutDashboard, Radar, Rss, Server, Star } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -12,10 +12,15 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { backtests, feed, radar, signals, sources, watchlists } from '@/routes';
+import { backtests, dashboard, feed, radar, signals, sources, watchlists } from '@/routes';
 import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
+    {
+        title: 'Desk',
+        href: dashboard(),
+        icon: LayoutDashboard,
+    },
     {
         title: 'Radar',
         href: radar(),
@@ -55,7 +60,7 @@ export function AppSidebar() {
                 <SidebarMenu>
                     <SidebarMenuItem>
                         <SidebarMenuButton size="lg" asChild>
-                            <Link href={radar()} prefetch>
+                            <Link href={dashboard()} prefetch>
                                 <AppLogo />
                             </Link>
                         </SidebarMenuButton>

@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\Ingestion\PullTwitterForTicker;
 use App\Jobs\Ingestion\SyncCompanyProfile;
+use App\Jobs\Ingestion\SyncTickerNews;
 use App\Models\AggregatorSnapshot;
 use App\Models\MarketBar;
 use App\Models\RawPost;
 use App\Models\Ticker;
 use App\Models\TickerMetric;
+use App\Models\TickerNews;
 use App\Services\Features\MarketIntelligence;
 use App\Services\MarketData\MarketClock;
 use Inertia\Inertia;
@@ -26,6 +29,11 @@ class TickerController extends Controller
         if ($profile === null || $profile->synced_at->lt(now()->subDays(7))) {
             SyncCompanyProfile::dispatch($ticker->id);
         }
+
+        // A human is looking: warm the news (6h cooldown) and the
+        // X/Twitter tape (30m cooldown) in the background.
+        SyncTickerNews::dispatchIfStale($ticker->id);
+        PullTwitterForTicker::dispatchIfStale($ticker->id);
 
         $series = TickerMetric::query()
             ->where('ticker_id', $ticker->id)
@@ -139,6 +147,19 @@ class TickerController extends Controller
             'aggregatorHistory' => $aggregatorHistory,
             'signals' => $ticker->signals()->orderByDesc('fired_at')->limit(20)->get(),
             'marketStatus' => $clock->status(),
+            'news' => TickerNews::query()
+                ->where('ticker_id', $ticker->id)
+                ->orderByDesc('published_at')
+                ->limit(8)
+                ->get()
+                ->map(fn (TickerNews $n): array => [
+                    'id' => $n->id,
+                    'publisher' => $n->publisher,
+                    'title' => $n->title,
+                    'article_url' => $n->article_url,
+                    'image_url' => $n->image_url,
+                    'published_at' => $n->published_at->toIso8601String(),
+                ]),
         ]);
     }
 

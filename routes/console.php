@@ -6,9 +6,11 @@ use App\Jobs\Ingestion\PollRedditViaApify;
 use App\Jobs\Ingestion\PollTradestie;
 use App\Jobs\Ingestion\PollTwitterViaApify;
 use App\Jobs\Ingestion\SyncTickerUniverse;
+use App\Jobs\Ingestion\SyncTrendingNews;
 use App\Jobs\Metrics\BuildTickerMetrics;
 use App\Jobs\Metrics\ScoreAuthorPumpRisk;
 use App\Jobs\Metrics\ScoreAuthorTrackRecords;
+use App\Jobs\Nlp\GenerateMarketBrief;
 use App\Jobs\Signals\ComputeSignals;
 use App\Jobs\Signals\GradeSignals;
 use App\Jobs\Trading\ManageSignalTrades;
@@ -140,6 +142,25 @@ Schedule::command('pennyhunt:train-gbm')
     ->name('train-gbm-shadow')
     ->onOneServer()
     ->appendOutputTo(storage_path('logs/ml-nightly.log'));
+
+/*
+|--------------------------------------------------------------------------
+| Desk: news + LLM market brief
+|--------------------------------------------------------------------------
+| News stays warm for the tickers people are talking about (per-ticker 6h
+| cooldown lives inside SyncTickerNews). The market brief regenerates
+| hourly through the trading day (UTC ≈ pre-market through after-hours);
+| the Desk also dispatches on-demand when it renders with a stale brief.
+*/
+
+Schedule::job(new SyncTrendingNews)->hourly()->name('sync-trending-news')->onOneServer();
+
+Schedule::job(new GenerateMarketBrief)
+    ->hourly()
+    ->between('10:00', '23:00')
+    ->weekdays()
+    ->name('generate-market-brief')
+    ->onOneServer();
 
 /*
 |--------------------------------------------------------------------------

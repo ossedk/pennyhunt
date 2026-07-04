@@ -1,19 +1,23 @@
 <?php
 
 use App\Http\Controllers\BacktestsController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\FeedController;
 use App\Http\Controllers\RadarController;
+use App\Http\Controllers\SearchController;
 use App\Http\Controllers\SignalsController;
 use App\Http\Controllers\SourcesController;
 use App\Http\Controllers\TickerController;
 use App\Http\Controllers\WatchlistController;
 use Illuminate\Support\Facades\Route;
 
-Route::redirect('/', '/radar')->name('home');
+Route::redirect('/', '/dashboard')->name('home');
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('dashboard', [DashboardController::class, 'index'])->name('dashboard');
+    Route::get('search', SearchController::class)->name('search');
+
     Route::get('radar', [RadarController::class, 'index'])->name('radar');
-    Route::redirect('dashboard', '/radar')->name('dashboard');
 
     Route::get('feed', [FeedController::class, 'index'])->name('feed');
     Route::get('signals', [SignalsController::class, 'index'])->name('signals');

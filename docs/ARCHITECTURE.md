@@ -128,7 +128,19 @@ Backfill & backtesting (Phase 4):
   MarketClock (Services\MarketData) — session state for the UI: Polygon
     /v1/marketstatus/now (60s cache, holiday-aware) with an NYSE-schedule
     fallback; open/early_hours/after_hours/closed rendered as
-    MarketStatusBadge on ticker page, cockpit and blotter
+    MarketStatusBadge on the Desk, ticker page, cockpit and blotter
+  SyncTickerNews (queue: ingestion) → PolygonClient::news → ticker_news
+    (upsert on Polygon article id); lazy from ticker page (6h cooldown)
+    + hourly SyncTrendingNews fan-out for the top-25 mentioned tickers
+  PullTwitterForTicker (queue: ingestion) — on-demand single-cashtag X
+    pull on ticker-page view / exact search hit; 30m cooldown, maxItems
+    capped to the first Apify pricing tier; display-only (AnalyticsGate)
+  MarketBriefWriter (Services\Nlp) → market_briefs — LLM desk brief from
+    a closed-world JSON context (regime, movers, mention leaders,
+    signals/positions, headlines); validated structured output, watch
+    items dropped unless their symbol exists in the context; regenerated
+    hourly (GenerateMarketBrief, 10:00–23:00 UTC weekdays) or on demand
+    when the Desk renders with a brief older than 45 minutes
   pennyhunt:classify-posts    → LlmPostClassifier over posts on backtest
     candidate (ticker, day)s only — targeted, cost-bounded historical coverage
   MarketIntelligence (Services\Features) — point-in-time feature store
@@ -263,11 +275,13 @@ GradeSignals → forward_return_1d/3d/5d via market_bars (Yahoo, keyless)
 
 | Route | Page | Notes |
 |---|---|---|
+| `/dashboard` (and `/`) | `pages/dashboard.tsx` | **The Desk** — landing page: LLM market brief hero (`market_briefs`, closed-world context, symbol-bound watch chips), regime strip + MarketStatusBadge, tape movers among socially-active names, crowd-volume leaders, loudest posts (24h, LLM badges), open risk + latest signals, attention-ranked news |
 | `/radar` | `pages/radar.tsx` | RegimeBanner (VIX/S&P/BTC/site-buzz), leaderboard (1h z-scores + live composite, "forming" rows), open-positions rail, tier-badged recent signals, aggregator movers; live via `pennyhunt.signals` + `pennyhunt.trades` |
 | `/feed` | `pages/feed.tsx` | filterable post stream (source, kind, LLM post-type, "My positions"); LLM type/direction/pump badges; off-topic excluded; live via `pennyhunt.feed` (debounced) |
 | `/signals` | `pages/signals.tsx` | trade blotter: forward-test scoreboard, Positions / History / Signal-log tabs, position risk-alert chips; live via `pennyhunt.trades` |
 | `/signals/{id}` | `pages/signals/show.tsx` | **signal cockpit**: trade plan (entry/stop/day-5 exit/Kelly), candle chart with entry+stop levels, decision evidence vs run #32 winner/loser medians, historical analogs, regime + dilution rails, mention momentum, social tape |
-| `/tickers/{symbol}` | `pages/tickers/show.tsx` | 12-month candle chart (`market_bars`) with signal markers, mention/sentiment chart, driving posts, verified-voices panel, dilution KPIs with InfoTips, signal history, aggregator cross-view |
+| `/tickers/{symbol}` | `pages/tickers/show.tsx` | 12-month candle chart (`market_bars`) with signal markers, mention/sentiment chart, driving posts, verified-voices panel, dilution KPIs with InfoTips, latest news card (`ticker_news`), signal history, aggregator cross-view; page view lazily dispatches SyncTickerNews (6h) + PullTwitterForTicker (30m) |
+| `/search?q=` | JSON endpoint | global Cmd+K ticker search (`components/pennyhunt/ticker-search.tsx`, mounted in the app header): exact symbol → prefix → name, tiers broken by 24h mention volume; exact hits warm the X tape |
 | `/backtests` | `pages/backtests.tsx` | run form (gates + exits), runs table, summary + winner profile + portfolio panel (equal vs Kelly equity curves, calibration line), paginated signals with confidence |
 | `/watchlists` | `pages/watchlists.tsx` | default watchlist, add/remove symbols |
 | `/sources` | `pages/sources.tsx` | ingestion health per source, credential warnings |
@@ -284,7 +298,10 @@ provenance in an InfoTip).
 
 - `tests/Unit/TickerExtractorTest.php` — cashtags, ambiguity, inactive symbols
 - `tests/Unit/LexiconSentimentTest.php` — polarity, negation, bounds
-- `tests/Feature/DashboardTest.php` — all main pages render for auth users
+- `tests/Feature/DashboardTest.php` — Desk renders (brief null-state, widget props), root redirect, all main pages render for auth users
+- `tests/Feature/SearchEndpointTest.php` — tier ranking (exact > prefix > name), attention tie-break, case-insensitive names, inactive exclusion
+- `tests/Feature/TickerNewsSyncTest.php` — Polygon news upsert idempotency, malformed-entry skip, dispatch cooldown
+- `tests/Feature/MarketBriefWriterTest.php` — closed-world watch enforcement (hallucinated symbols dropped), unusable-output rejection, key gating
 - `tests/Feature/PollRedditViaApifyTest.php` — Apify run happy path (faked HTTP),
   failure marking, no-token no-op
 - `tests/Feature/PollTwitterViaApifyTest.php` — cashtag targeting, tweet

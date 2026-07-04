@@ -118,6 +118,14 @@ type Props = {
         forward_return_5d: number | null;
     }[];
     marketStatus: MarketStatus | null;
+    news: {
+        id: number;
+        publisher: string | null;
+        title: string;
+        article_url: string;
+        image_url: string | null;
+        published_at: string;
+    }[];
 };
 
 function compactMoney(value: number | null): string {
@@ -204,6 +212,7 @@ export default function TickerShow({
     aggregatorHistory,
     signals,
     marketStatus,
+    news,
 }: Props) {
     // Signal markers snapped to the last session on/before each fire date.
     const signalMarkers = signals
@@ -687,6 +696,42 @@ export default function TickerShow({
                     </Card>
 
                     <div className="flex flex-col gap-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-1.5 text-sm">
+                                    Latest news
+                                    <InfoTip>
+                                        Wire coverage from Polygon, refreshed in the background when you open this page
+                                        (at most every 6 hours).
+                                    </InfoTip>
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="flex flex-col gap-2">
+                                {news.length === 0 ? (
+                                    <p className="py-4 text-center text-sm text-muted-foreground">
+                                        No recent coverage found — syncing in the background.
+                                    </p>
+                                ) : (
+                                    news.map((item) => (
+                                        <a
+                                            key={item.id}
+                                            href={item.article_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="group rounded-md border border-border/50 px-3 py-2 transition-colors hover:bg-accent"
+                                        >
+                                            <p className="text-sm leading-snug font-medium group-hover:underline">{item.title}</p>
+                                            <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                                <span>{item.publisher ?? 'wire'}</span>
+                                                <span>{relativeTime(item.published_at)}</span>
+                                                <ExternalLink className="ml-auto size-3" />
+                                            </span>
+                                        </a>
+                                    ))
+                                )}
+                            </CardContent>
+                        </Card>
+
                         <Card>
                             <CardHeader>
                                 <CardTitle className="text-sm">Signal history</CardTitle>
