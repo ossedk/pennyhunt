@@ -13,6 +13,7 @@ use App\Models\SignalModel;
 use App\Models\SignalTrade;
 use App\Models\TickerMetric;
 use App\Services\Features\MarketIntelligence;
+use App\Services\MarketData\MarketClock;
 use Illuminate\Http\JsonResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -23,7 +24,7 @@ class SignalsController extends Controller
      * The blotter: open/pending positions with live P&L, closed-trade
      * history with the forward-test scoreboard, and the raw signal log.
      */
-    public function index(): Response
+    public function index(MarketClock $clock): Response
     {
         $positions = SignalTrade::query()
             ->whereIn('status', ['pending_entry', 'open'])
@@ -85,6 +86,7 @@ class SignalsController extends Controller
             'scoreboard' => $this->scoreboard(),
             'tradeTier' => SignalModel::active()?->metrics['trade_tier'] ?? null,
             'tradeAlerts' => $tradeAlerts,
+            'marketStatus' => $clock->status(),
         ]);
     }
 
@@ -93,7 +95,7 @@ class SignalsController extends Controller
      * one screen — trade plan, decision evidence vs. the backtest's winner
      * profile, historical analogs, and the social tape since the fire.
      */
-    public function show(Signal $signal): Response
+    public function show(Signal $signal, MarketClock $clock): Response
     {
         $signal->load('ticker:id,symbol,name,exchange');
 
@@ -181,6 +183,7 @@ class SignalsController extends Controller
             'mentionCurve' => $mentionCurve,
             'filingsSinceFire' => $filingsSinceFire,
             'posts' => $posts,
+            'marketStatus' => $clock->status(),
         ]);
     }
 

@@ -41,6 +41,12 @@ class PolygonClient
         return $response?->json('results') ?? [];
     }
 
+    /** @return array<string, mixed>|null raw /v1/marketstatus/now payload */
+    public function marketStatus(): ?array
+    {
+        return $this->get('/v1/marketstatus/now')?->json();
+    }
+
     /** @param array<string, mixed> $query */
     protected function get(string $path, array $query = []): ?Response
     {

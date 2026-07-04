@@ -1,7 +1,8 @@
 import { Head, Link, router } from '@inertiajs/react';
 import { useEchoPublic } from '@laravel/echo-react';
 import { useState } from 'react';
-import { relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
+import { MarketStatusBadge, relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
+import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { InfoTip } from '@/components/pennyhunt/info-tip';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -78,6 +79,7 @@ type Props = {
     };
     tradeTier: { raw_p: number; calibrated_p: number } | null;
     tradeAlerts: TradeAlert[];
+    marketStatus: MarketStatus | null;
 };
 
 const ALERT_LABELS: Record<string, { label: string; tone: string }> = {
@@ -98,7 +100,7 @@ const returnColor = (v: number | null | undefined) =>
 
 type Tab = 'positions' | 'history' | 'log';
 
-export default function Signals({ positions, closed, signals: signalPage, scoreboard, tradeTier, tradeAlerts }: Props) {
+export default function Signals({ positions, closed, signals: signalPage, scoreboard, tradeTier, tradeAlerts, marketStatus }: Props) {
     const [tab, setTab] = useState<Tab>(positions.length > 0 ? 'positions' : 'log');
 
     // Live refresh on trade lifecycle broadcasts (entry fills, exits, quotes).
@@ -112,6 +114,7 @@ export default function Signals({ positions, closed, signals: signalPage, scoreb
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <div className="flex flex-wrap items-center gap-3">
                     <h1 className="text-lg font-semibold">Signals & trades</h1>
+                    <MarketStatusBadge market={marketStatus} />
                     {tradeTier && (
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
                             trade tier ≥ {(tradeTier.calibrated_p * 100).toFixed(1)}% model probability

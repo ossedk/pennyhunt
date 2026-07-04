@@ -9,12 +9,13 @@ use App\Models\RawPost;
 use App\Models\Ticker;
 use App\Models\TickerMetric;
 use App\Services\Features\MarketIntelligence;
+use App\Services\MarketData\MarketClock;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class TickerController extends Controller
 {
-    public function show(string $symbol): Response
+    public function show(string $symbol, MarketClock $clock): Response
     {
         $ticker = Ticker::query()->where('symbol', strtoupper($symbol))->firstOrFail();
 
@@ -137,6 +138,7 @@ class TickerController extends Controller
             'tweets' => $tweets,
             'aggregatorHistory' => $aggregatorHistory,
             'signals' => $ticker->signals()->orderByDesc('fired_at')->limit(20)->get(),
+            'marketStatus' => $clock->status(),
         ]);
     }
 

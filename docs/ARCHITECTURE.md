@@ -125,6 +125,10 @@ Backfill & backtesting (Phase 4):
     → ticker_profiles (description/SIC/market cap/shares/employees) +
     ticker_financials (SEC XBRL quarterly + annual statements);
     dispatched lazily from the ticker page when profile missing/stale >7d
+  MarketClock (Services\MarketData) — session state for the UI: Polygon
+    /v1/marketstatus/now (60s cache, holiday-aware) with an NYSE-schedule
+    fallback; open/early_hours/after_hours/closed rendered as
+    MarketStatusBadge on ticker page, cockpit and blotter
   pennyhunt:classify-posts    → LlmPostClassifier over posts on backtest
     candidate (ticker, day)s only — targeted, cost-bounded historical coverage
   MarketIntelligence (Services\Features) — point-in-time feature store

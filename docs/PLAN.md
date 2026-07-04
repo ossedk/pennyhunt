@@ -418,6 +418,12 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
     trade+kind+day.
   - Tests: `TradeEngineTest` (7), `TradeAlertsTest` (4),
     `SignalCockpitPageTest` (2); full suite green (126).
+- ✅ **Market-aware session status (2026-07-04)** — new `MarketClock`
+  service (Polygon `/v1/marketstatus/now`, 60s cache, holiday-aware;
+  NYSE-schedule fallback when Polygon is unreachable) surfaces
+  open / pre-market / after-hours / closed as a `MarketStatusBadge` on
+  the ticker page, signal cockpit and blotter, so quotes and unrealized
+  P&L are always read with session context.
 - ▶️ Forward paper-trade of the calibrated p ≥ 0.124 tier (v3 discipline:
   next-open entry, 10% stop, no take, day-5 time exit) — **now running
   automatically via the trade engine**; every future trade-tier signal

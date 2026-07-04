@@ -129,6 +129,43 @@ export function TradeStatusBadge({ status }: { status: string }) {
 }
 
 /**
+ * US market session state ("Market open", "Pre-market", "After hours",
+ * "Market closed") so prices and P&L are read with the right context.
+ */
+export type MarketStatus = {
+    status: 'open' | 'early_hours' | 'after_hours' | 'closed';
+    as_of: string;
+    source: string;
+};
+
+export function MarketStatusBadge({ market }: { market: MarketStatus | null | undefined }) {
+    if (!market) {
+        return null;
+    }
+
+    const meta: Record<MarketStatus['status'], { label: string; dot: string; text: string }> = {
+        open: { label: 'Market open', dot: 'bg-emerald-500', text: 'text-emerald-400' },
+        early_hours: { label: 'Pre-market', dot: 'bg-sky-400', text: 'text-sky-300' },
+        after_hours: { label: 'After hours', dot: 'bg-amber-400', text: 'text-amber-300' },
+        closed: { label: 'Market closed', dot: 'bg-zinc-500', text: 'text-muted-foreground' },
+    };
+
+    const { label, dot, text } = meta[market.status] ?? meta.closed;
+
+    return (
+        <span
+            className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 font-mono text-xs',
+                text,
+            )}
+        >
+            <span className={cn('size-1.5 rounded-full', dot, market.status === 'open' && 'animate-pulse')} />
+            {label}
+        </span>
+    );
+}
+
+/**
  * Data freshness chip ("Reddit: 40s ago") — latency honesty.
  */
 export function FreshnessChip({ label, at }: { label: string; at: string | null | undefined }) {

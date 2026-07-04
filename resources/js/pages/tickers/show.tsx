@@ -10,7 +10,8 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
-import { PumpRiskBadge, relativeTime, SentimentBadge } from '@/components/pennyhunt/badges';
+import { MarketStatusBadge, PumpRiskBadge, relativeTime, SentimentBadge } from '@/components/pennyhunt/badges';
+import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { CandleChart } from '@/components/pennyhunt/candle-chart';
 import type { OhlcBar } from '@/components/pennyhunt/candle-chart';
 import { InfoTip } from '@/components/pennyhunt/info-tip';
@@ -116,6 +117,7 @@ type Props = {
         fired_at: string;
         forward_return_5d: number | null;
     }[];
+    marketStatus: MarketStatus | null;
 };
 
 function compactMoney(value: number | null): string {
@@ -201,6 +203,7 @@ export default function TickerShow({
     tweets,
     aggregatorHistory,
     signals,
+    marketStatus,
 }: Props) {
     // Signal markers snapped to the last session on/before each fire date.
     const signalMarkers = signals
@@ -255,21 +258,24 @@ export default function TickerShow({
                         </div>
                         <span className="text-sm text-muted-foreground">{ticker.name}</span>
                     </div>
-                    {lastPrice !== null && (
-                        <div className="flex items-baseline gap-3">
-                            <span className="font-mono text-3xl leading-none font-semibold">
-                                ${fmtSharePrice(lastPrice)}
-                            </span>
-                            {dayChange !== null && (
-                                <span
-                                    className={`font-mono text-lg ${dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
-                                >
-                                    {dayChange >= 0 ? '+' : ''}
-                                    {(dayChange * 100).toFixed(2)}%
+                    <div className="flex flex-col items-end gap-1.5">
+                        {lastPrice !== null && (
+                            <div className="flex items-baseline gap-3">
+                                <span className="font-mono text-3xl leading-none font-semibold">
+                                    ${fmtSharePrice(lastPrice)}
                                 </span>
-                            )}
-                        </div>
-                    )}
+                                {dayChange !== null && (
+                                    <span
+                                        className={`font-mono text-lg ${dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+                                    >
+                                        {dayChange >= 0 ? '+' : ''}
+                                        {(dayChange * 100).toFixed(2)}%
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        <MarketStatusBadge market={marketStatus} />
+                    </div>
                 </div>
 
                 {/* ── Key stats strip ────────────────────────────────────── */}

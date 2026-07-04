@@ -1,7 +1,8 @@
 import { Head, Link } from '@inertiajs/react';
 import { ExternalLink } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
+import { MarketStatusBadge, relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
+import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { CandleChart    } from '@/components/pennyhunt/candle-chart';
 import type {ChartLevel, ChartMarker, OhlcBar} from '@/components/pennyhunt/candle-chart';
 import { InfoTip } from '@/components/pennyhunt/info-tip';
@@ -105,6 +106,7 @@ type Props = {
     mentionCurve: { day: string; mentions: number; authors: number; zscore: number | null; sentiment: number | null }[];
     filingsSinceFire: { form: string; filed_at: string }[];
     posts: Post[];
+    marketStatus: MarketStatus | null;
 };
 
 const pct = (v: number | null | undefined, digits = 1) =>
@@ -128,6 +130,7 @@ export default function SignalCockpit({
     mentionCurve,
     filingsSinceFire,
     posts,
+    marketStatus,
 }: Props) {
     return (
         <>
@@ -146,10 +149,13 @@ export default function SignalCockpit({
                     </div>
                     <TierBadge confidence={signal.confidence} threshold={tradeTier?.calibrated_p ?? null} />
                     {trade && <TradeStatusBadge status={trade.status} />}
-                    <span className="ml-auto text-xs text-muted-foreground">
-                        fired {relativeTime(signal.fired_at)}
-                        {signal.model_version ? ` · ${signal.model_version}` : ''}
-                    </span>
+                    <div className="ml-auto flex items-center gap-3">
+                        <MarketStatusBadge market={marketStatus} />
+                        <span className="text-xs text-muted-foreground">
+                            fired {relativeTime(signal.fired_at)}
+                            {signal.model_version ? ` · ${signal.model_version}` : ''}
+                        </span>
+                    </div>
                 </div>
 
                 {/* ── KPI strip ─────────────────────────────────────────── */}
