@@ -29,13 +29,28 @@ type FeedPost = {
     author: { username: string; karma: number | null; pump_risk_score: number } | null;
     sentiment: {
         lexicon_score: number | null;
-        llm_direction: number | null;
+        llm_direction: string | null; // bullish | bearish | neutral
         llm_post_type: string | null;
         llm_conviction: number | null;
         llm_pump_suspicion: number | null;
     } | null;
     tickers: { symbol: string; confidence: number }[];
 };
+
+/** LLM verdict > lexicon, mapped to [-1, 1] (mirrors PostSentiment::effectiveScore). */
+function effectiveSentiment(sentiment: FeedPost['sentiment']): number | null {
+    if (!sentiment) {
+        return null;
+    }
+
+    if (sentiment.llm_direction !== null) {
+        const sign = sentiment.llm_direction === 'bullish' ? 1 : sentiment.llm_direction === 'bearish' ? -1 : 0;
+
+        return sign * (sentiment.llm_conviction ?? 0.5);
+    }
+
+    return sentiment.lexicon_score;
+}
 
 type Props = {
     posts: {
@@ -179,7 +194,7 @@ return;
                                                     {post.sentiment.llm_post_type}
                                                 </Badge>
                                             )}
-                                            <SentimentBadge value={post.sentiment?.llm_direction ?? post.sentiment?.lexicon_score} />
+                                            <SentimentBadge value={effectiveSentiment(post.sentiment)} />
                                             <PumpRiskBadge value={post.sentiment?.llm_pump_suspicion ?? post.author?.pump_risk_score} />
                                         </span>
                                     </div>

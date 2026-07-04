@@ -43,9 +43,30 @@ Scheduler (routes/console.php)
   │              ScoreAuthorTrackRecords (06:30),
   │              pennyhunt:sync-market-bars (05:00, feeds the market gate;
   │                IWM benchmark + ^VIX + BTC-USD macro series ride along),
+  │              ManageSignalTrades (05:10, paper-trade entries + stop/time
+  │                exits on the fresh bars, then TradeAlerts risk checks),
   │              pennyhunt:sync-short-volume (05:15, FINRA Reg SHO),
-  │              pennyhunt:sync-sec-filings (05:30, EDGAR dilution data)
+  │              pennyhunt:sync-sec-filings (05:30, EDGAR dilution data),
+  │              pennyhunt:backfill-llm-features + pennyhunt:train-gbm
+  │                (07:00/07:15 shadow retrain, NO auto-activate)
+  ├─ every 15m → RefreshOpenTradeQuotes (US market hours only; indicative
+  │              quotes + unrealized P&L for OPEN paper positions)
   └─ weekly    → SyncTickerUniverse (SEC company_tickers.json + CIKs, +FMP enrich)
+
+Trade engine (forward test):
+  SignalFired → OpenTradeForSignal listener → TradeEngine::createForSignal
+    → signal_trades row (pending_entry) for signals ≥ the active model's
+      calibrated trade tier (metrics.trade_tier.calibrated_p, now 0.124);
+      half-Kelly size suggestion from the model's own run payoff ratio
+  ManageSignalTrades → TradeEngine::sync
+    → entry = next session's open; stop = entry×0.90; day-5 close time exit;
+      SAME pessimistic OHLC fills as Backtester::simulateExit (gap through
+      the stop fills at the open) — live and research semantics identical
+    → TradeAlerts: stop proximity ≤3% (intraday, from quote refresh),
+      time-exit-next-session, dilution filing since entry, mention collapse
+      (>70% vs fire day) → system alert_events (kind=trade_*, deduped/day)
+  broadcasts: channel pennyhunt.trades, event trade.updated
+    (created/opened/closed/cancelled/quote) → blotter + radar live-reload
 
 PollRedditViaApify → ApifyClient (trudax/reddit-scraper-lite, pay-per-result)
   one run scrapes /r/<sub>/new/ for all 15 subs; postDateLimit = last poll
@@ -228,17 +249,22 @@ GradeSignals → forward_return_1d/3d/5d via market_bars (Yahoo, keyless)
 
 | Route | Page | Notes |
 |---|---|---|
-| `/radar` | `pages/radar.tsx` | leaderboard (1h z-scores), aggregator movers, recent signals; live via `pennyhunt.signals` |
-| `/feed` | `pages/feed.tsx` | filterable post stream; live via `pennyhunt.feed` (debounced) |
-| `/signals` | `pages/signals.tsx` | all signals + confidence + gate chip + component breakdown + forward returns; expandable rows fetch `/signals/{id}/bars` for a post-signal price chart (fired/entry/−10% stop/5d exit annotations) |
-| `/tickers/{symbol}` | `pages/tickers/show.tsx` | 6-month price chart (`market_bars`) with signal markers, mention/sentiment chart, driving posts, signal history, aggregator cross-view |
+| `/radar` | `pages/radar.tsx` | RegimeBanner (VIX/S&P/BTC/site-buzz), leaderboard (1h z-scores + live composite, "forming" rows), open-positions rail, tier-badged recent signals, aggregator movers; live via `pennyhunt.signals` + `pennyhunt.trades` |
+| `/feed` | `pages/feed.tsx` | filterable post stream (source, kind, LLM post-type, "My positions"); LLM type/direction/pump badges; off-topic excluded; live via `pennyhunt.feed` (debounced) |
+| `/signals` | `pages/signals.tsx` | trade blotter: forward-test scoreboard, Positions / History / Signal-log tabs, position risk-alert chips; live via `pennyhunt.trades` |
+| `/signals/{id}` | `pages/signals/show.tsx` | **signal cockpit**: trade plan (entry/stop/day-5 exit/Kelly), candle chart with entry+stop levels, decision evidence vs run #32 winner/loser medians, historical analogs, regime + dilution rails, mention momentum, social tape |
+| `/tickers/{symbol}` | `pages/tickers/show.tsx` | 12-month candle chart (`market_bars`) with signal markers, mention/sentiment chart, driving posts, verified-voices panel, dilution KPIs with InfoTips, signal history, aggregator cross-view |
 | `/backtests` | `pages/backtests.tsx` | run form (gates + exits), runs table, summary + winner profile + portfolio panel (equal vs Kelly equity curves, calibration line), paginated signals with confidence |
 | `/watchlists` | `pages/watchlists.tsx` | default watchlist, add/remove symbols |
 | `/sources` | `pages/sources.tsx` | ingestion health per source, credential warnings |
 
 Shared UI: `components/pennyhunt/badges.tsx` (SentimentBadge, ZScoreBadge,
-PumpRiskBadge, FreshnessChip) enforce the two UX rules: every number shows
-"compared to what", and bullish sentiment never appears without pump risk.
+PumpRiskBadge, FreshnessChip, TierBadge, TradeStatusBadge),
+`candle-chart.tsx` (Lightweight Charts + markers + price levels),
+`info-tip.tsx`. UX rules: every number shows "compared to what", bullish
+sentiment never appears without pump risk, and nothing invented sits next
+to something validated (every derived number carries its backtest
+provenance in an InfoTip).
 
 ## Tests
 
@@ -262,4 +288,12 @@ PumpRiskBadge, FreshnessChip) enforce the two UX rules: every number shows
   no-scored-trades error
 - `tests/Feature/SignalBarsEndpointTest.php` — bars + entry/stop/time-exit
   annotations, auth required
-- Run: `php artisan test --parallel` (83 passing as of this writing)
+- `tests/Feature/TradeEngineTest.php` — tier gating, next-open entry fill,
+  gap-through-stop at open, entry-day intraday stop, day-5 time exit,
+  partial-bars stay open, entry-timeout cancel
+- `tests/Feature/TradeAlertsTest.php` — stop proximity (+ per-day dedupe),
+  dilution filing, time-exit eve, mention collapse
+- `tests/Feature/SignalCockpitPageTest.php` — blotter + cockpit Inertia props
+- `tests/Unit/SignalModelGbmTest.php` — PHP GBM tree traversal, missing
+  features, isotonic interpolation/clipping
+- Run: `php artisan test --parallel` (126 passing as of this writing)

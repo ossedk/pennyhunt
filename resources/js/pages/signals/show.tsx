@@ -80,7 +80,7 @@ type Post = {
     author: { username: string; karma: number | null; pump_risk_score: number | null } | null;
     sentiment: {
         lexicon_score: number | null;
-        llm_direction: number | null;
+        llm_direction: string | null; // bullish | bearish | neutral
         llm_post_type: string | null;
         llm_conviction: number | null;
         llm_pump_suspicion: number | null;

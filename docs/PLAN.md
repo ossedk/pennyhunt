@@ -358,22 +358,56 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   23-feature retrain (run32.5, kept inactive: only 16.7% of events have
   coverage yet, metrics unchanged vs run32.4 as expected).
 - ⬜ Retrain + activate the 23-feature GBM when the run #32 candidate-day
-  classification backfill (~139k posts, started 2026-07-04) reaches high
-  coverage: `pennyhunt:backfill-llm-features --run=32` →
+  classification backfill (~147k posts total; 13.4k classified, ~133k
+  remaining as of 2026-07-04 17:00) reaches high coverage:
+  `pennyhunt:backfill-llm-features --run=32` →
   `pennyhunt:train-gbm --run=32 --activate`. Then author track records
   as a feature; expected-net-exit-return label experiment.
+  **Decision 2026-07-04: the classification backfill moves to a server**
+  (local runs kept dying with the laptop/IDE sessions). The command is
+  idempotent and restartable — already-classified posts are skipped on
+  re-invocation, so run on the server under nohup/systemd/supervisor:
+  `php artisan pennyhunt:classify-posts --run=32 --limit=140000`.
+  At ~2.5 posts/s (rate-limit sleep) the remainder is ~15h of runtime;
+  requires `OPENAI_API_KEY` + `PENNYHUNT_LLM_MAX_PER_DAY` sized to match.
   **Nightly shadow retrain scheduled (07:00/07:15, NO auto-activation)**
   — feature refresh + inactive GBM import daily, so LLM-feature
   importance is observable as coverage climbs (`storage/logs/ml-nightly.log`).
-- ⬜ **Trade Cockpit** (UI/UX/decision-support upgrade of Radar, Feed,
-  Signals + new per-signal cockpit page): paper-trade ledger
-  (`signal_trades`) enforcing the validated v3 discipline, live P&L +
-  stop tracking, deterministic hold/exit checklist, forward-test
-  scoreboard, tier-badged Radar with regime banner, LLM-badged Feed.
-  Detailed plan + tradeoffs: `docs/plans/2026-07-04-trade-cockpit.md`.
-- ⬜ Forward paper-trade of the calibrated p ≥ 0.124 tier (v3 discipline:
-  next-open entry, 10% stop, no take, day-5 time exit) — accumulate live
-  out-of-sample evidence.
+- ✅ **Trade Cockpit SHIPPED (2026-07-04)** — all three phases of
+  `docs/plans/2026-07-04-trade-cockpit.md`:
+  - **Trade engine**: `signal_trades` ledger + `TradeEngine` (auto-opens a
+    paper trade for every signal ≥ the active model's calibrated trade
+    tier via `OpenTradeForSignal` listener; fills entries at the next
+    session's open and walks stop/day-5 exits with the exact
+    `Backtester::simulateExit` pessimistic OHLC rules). Jobs:
+    `ManageSignalTrades` (05:10 daily, after bar sync) +
+    `RefreshOpenTradeQuotes` (15-min indicative quotes, US market hours;
+    never closes trades — exits are authoritative on daily bars only).
+    Half-Kelly size suggestion from the model's own run payoff ratio.
+    Reverb channel `pennyhunt.trades` (`trade.updated`).
+  - **Signal cockpit** (`/signals/{id}`): trade-plan card, candle chart
+    with entry/stop levels + fire/exit markers, decision-evidence
+    checklist vs run #32 winner/loser medians, historical-analog stats
+    (same price bucket + volume band), regime + dilution rails,
+    mention-momentum bars, LLM-badged social tape.
+  - **Blotter** (`/signals`): forward-test scoreboard, Positions /
+    History / Signal-log tabs, position risk-alert chips, live refresh.
+  - **Radar**: RegimeBanner (VIX/S&P/BTC/site-buzz), live composite +
+    "forming" rows on the leaderboard, tier-badged recent signals,
+    open-positions rail.
+  - **Feed**: LLM post-type badges + direction/conviction, post-type
+    filter, "My positions" filter, off-topic posts excluded.
+  - **Trade alerts** (`TradeAlerts`, system-generated `alert_events`):
+    stop proximity (≤3%), time-exit-next-session, dilution filing since
+    entry, mention collapse (>70% drop from fire day). Deduped per
+    trade+kind+day.
+  - Tests: `TradeEngineTest` (7), `TradeAlertsTest` (4),
+    `SignalCockpitPageTest` (2); full suite green (126).
+- ▶️ Forward paper-trade of the calibrated p ≥ 0.124 tier (v3 discipline:
+  next-open entry, 10% stop, no take, day-5 time exit) — **now running
+  automatically via the trade engine**; every future trade-tier signal
+  becomes a managed paper position. Needs ≥50 closed trades before the
+  scoreboard is trusted as gate evidence.
 - ⬜ Phase D (execution realism): minute-bar stop-fill validation via Alpaca
   (free account) or Polygon Starter ($29/mo); paper-trading forward test.
 - **Decision gate:** does any signal configuration show predictive lead time and precision above base rate? **Status: NOT passed, but Phase C moved it for the first time.** The trade-everything configuration is invalidated across three regimes (run #32: −4.51%/trade, PF 0.59). What survives and is regime-stable: 3.4–4.4× precision lift, monotone confidence ranking, Kelly risk control. **New (2026-07-04): the walk-forward GBM is the first model to beat the base-rate Brier, and its causal top tier (p ≥ 0.15) shows +2.7–4.1% net/trade over 24 months — positive expectancy visible for the first time, though bootstrap CIs still span zero and 2025-H1 stays negative.** The gate now needs: GBM in production, LLM post-type + author features added, and a forward paper-trade of the top tier. Analyses: `docs/audits/2026-07-04-phase-c-gbm.md` (latest), `docs/audits/2026-07-03-backtest-24m-run32.md`, `docs/audits/2026-07-03-two-regime-flagship.md`.**

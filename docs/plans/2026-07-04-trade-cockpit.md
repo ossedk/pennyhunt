@@ -1,6 +1,7 @@
 # Trade Cockpit — Radar / Feed / Signals UI, UX & decision-support upgrade
 
-> Created: 2026-07-04 · Status: PROPOSED (phase 1 scoped, awaiting go)
+> Created: 2026-07-04 · Status: **SHIPPED 2026-07-04** (all 3 phases; see
+> "Implementation notes" at the bottom for deltas from the proposal)
 > Companion docs: `docs/PLAN.md` §7, `docs/ARCHITECTURE.md`,
 > `docs/audits/2026-07-04-phase-c-gbm.md`
 
@@ -249,3 +250,36 @@ BacktesterTest) land with phase 1.
 - ML-generated exit advice (no validated policy beyond v3 — see §1 ¶2).
 - Sub-15-min real-time quotes, workspace/multi-panel layout engine.
 - Mobile-first redesign (desktop terminal is the use case).
+
+## 6. Implementation notes (as shipped, 2026-07-04)
+
+Everything above shipped in one pass; deltas and decisions worth recording:
+
+- **Trade creation** — `OpenTradeForSignal` listener (auto-discovered) on
+  `SignalFired` calls `TradeEngine::createForSignal`; only trade-tier
+  signals get rows (no `watch` rows — the signal log already covers those).
+  Signals with null confidence or no active tiered model open nothing.
+- **Kelly suggestion** — half-Kelly from f\* = p − (1−p)/b where b is the
+  win/|loss| payoff ratio measured on the active model's own training run
+  (fired events ≥ tier raw p, net of 5% friction; cached daily), capped at
+  10% equity. Advisory only; hidden when the run lacks enough wins.
+- **Quote source** — Yahoo chart-meta `regularMarketPrice` for all symbols
+  (Polygon snapshot deferred; one source is enough at this volume).
+- **Alerts** — implemented as *system-generated* `alert_events`
+  (`alert_rule_id` made nullable, new `kind` + `signal_trade_id` columns)
+  rather than user-configured rule kinds: `trade_stop_proximity`,
+  `trade_time_exit_next`, `trade_new_filing`, `trade_mention_collapse`.
+  Surfaced as chips on the blotter; deduped per trade+kind+day.
+- **Feed** — kept 50-row pagination instead of a virtualization lib
+  (measured render is fine; revisit only if the page actually gets slow).
+  Off-topic (LLM-flagged) posts are excluded server-side.
+- **Cockpit checklist** — 8 evidence rows against run #32 winner/loser
+  medians (94 winners / 625 losers); LLM rows shown without medians until
+  a high-coverage retrain lands. `CandleChart` gained a `levels` prop
+  (entry/stop price lines).
+- **Deferred from the proposal**: ⌘K command palette, per-row leaderboard
+  sparklines + dilution glyphs, ticker-page open-trade banner, blotter
+  equity sparkline, live per-row GBM scoring on the Radar (needs cached
+  per-ticker-day features to be honest).
+- **Tests**: `TradeEngineTest` (entry fill, gap-through-stop, entry-day
+  stop, time exit, cancel), `TradeAlertsTest`, `SignalCockpitPageTest`.
