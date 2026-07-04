@@ -371,6 +371,9 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   the `pennyhunt-classify-backfill` systemd user unit
   (`~/run-classify-backfill.sh` loops `classify-posts --limit=2000` until
   the candidate set is exhausted; ~133k posts remaining at launch).
+  **Nightly shadow retrain scheduled (07:00/07:15, NO auto-activation)**
+  — feature refresh + inactive GBM import daily, so LLM-feature
+  importance is observable as coverage climbs (`storage/logs/ml-nightly.log`).
 - ✅ **Twitter/X quarantined from analytics (2026-07-04)** — tweets are
   now DISPLAY-ONLY (feed/ticker tape, verified-voices panel). They are
   excluded from ticker metric rollups + z-scores, live signal computation,
@@ -380,13 +383,11 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   unproven; the ingestion gates (min likes, spam scanner, LLM off-topic
   mention stripping) reduce but don't eliminate contamination. Central
   switch: `App\Support\AnalyticsGate` +
-  `PENNYHUNT_TWITTER_IN_ANALYTICS` (default false). Re-enable only after
-  validating tweets against backtest outcomes as a separate feature block
-  (e.g. `twitter_mention_z` as its own column, not folded into site-wide
-  counts).
-  **Nightly shadow retrain scheduled (07:00/07:15, NO auto-activation)**
-  — feature refresh + inactive GBM import daily, so LLM-feature
-  importance is observable as coverage climbs (`storage/logs/ml-nightly.log`).
+  `PENNYHUNT_TWITTER_IN_ANALYTICS` (default false). Prod metric buckets
+  containing tweets (2,189) were purged and rebuilt from Reddit-only
+  data. Re-enable only after validating tweets against backtest outcomes
+  as a separate feature block (e.g. `twitter_mention_z` as its own
+  column, not folded into site-wide counts).
 - ✅ **Trade Cockpit SHIPPED (2026-07-04)** — all three phases of
   `docs/plans/2026-07-04-trade-cockpit.md`:
   - **Trade engine**: `signal_trades` ledger + `TradeEngine` (auto-opens a
