@@ -2,6 +2,7 @@
 
 namespace App\Jobs\Metrics;
 
+use App\Support\AnalyticsGate;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
@@ -38,6 +39,8 @@ class BuildTickerMetrics implements ShouldQueue
             default => throw new \InvalidArgumentException("Unknown interval [{$this->interval}]"),
         };
 
+        $gate = AnalyticsGate::sourceJoin('p');
+
         DB::statement(<<<SQL
             INSERT INTO ticker_metrics
                 (ticker_id, interval, bucket_start, mention_count, unique_authors,
@@ -56,6 +59,7 @@ class BuildTickerMetrics implements ShouldQueue
                 NOW(), NOW()
             FROM post_ticker_mentions m
             JOIN raw_posts p ON p.id = m.raw_post_id
+            {$gate}
             LEFT JOIN post_sentiments s ON s.raw_post_id = p.id
             LEFT JOIN authors a ON a.id = p.author_id
             CROSS JOIN LATERAL (
@@ -89,7 +93,7 @@ class BuildTickerMetrics implements ShouldQueue
     {
         $baselineDays = (int) config('pennyhunt.signals.baseline_days');
 
-        DB::statement(<<<SQL
+        DB::statement(<<<'SQL'
             WITH baseline AS (
                 SELECT
                     ticker_id,

@@ -366,11 +366,24 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   **Decision 2026-07-04: the classification backfill moves to a server**
   (local runs kept dying with the laptop/IDE sessions). The command is
   idempotent and restartable — already-classified posts are skipped on
-  re-invocation. **DONE 2026-07-04 evening: production moved to the Forge
+  re-invocation.   **DONE 2026-07-04 evening: production moved to the Forge
   server** (see `docs/DEPLOYMENT.md`) and the backfill now runs there as
   the `pennyhunt-classify-backfill` systemd user unit
   (`~/run-classify-backfill.sh` loops `classify-posts --limit=2000` until
   the candidate set is exhausted; ~133k posts remaining at launch).
+- ✅ **Twitter/X quarantined from analytics (2026-07-04)** — tweets are
+  now DISPLAY-ONLY (feed/ticker tape, verified-voices panel). They are
+  excluded from ticker metric rollups + z-scores, live signal computation,
+  backtest daily stats, MarketIntelligence site/ticker mention features,
+  LLM aggregates and therefore all GBM training data. Rationale: bot
+  volume, crypto-cashtag collisions and parody posts make X data
+  unproven; the ingestion gates (min likes, spam scanner, LLM off-topic
+  mention stripping) reduce but don't eliminate contamination. Central
+  switch: `App\Support\AnalyticsGate` +
+  `PENNYHUNT_TWITTER_IN_ANALYTICS` (default false). Re-enable only after
+  validating tweets against backtest outcomes as a separate feature block
+  (e.g. `twitter_mention_z` as its own column, not folded into site-wide
+  counts).
   **Nightly shadow retrain scheduled (07:00/07:15, NO auto-activation)**
   — feature refresh + inactive GBM import daily, so LLM-feature
   importance is observable as coverage climbs (`storage/logs/ml-nightly.log`).

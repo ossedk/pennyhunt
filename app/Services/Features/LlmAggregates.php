@@ -2,6 +2,7 @@
 
 namespace App\Services\Features;
 
+use App\Support\AnalyticsGate;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -50,7 +51,9 @@ class LlmAggregates
         // One pass over the window's mentions: total posts per (ticker, day)
         // for coverage, plus conditional aggregates over the classified
         // subset. CASE/AVG keeps it portable between Postgres and SQLite.
-        $rows = DB::select(<<<'SQL'
+        $gate = AnalyticsGate::mentionJoin('m');
+
+        $rows = DB::select(<<<SQL
             SELECT
                 m.ticker_id,
                 date(m.posted_at) AS day,
@@ -64,6 +67,7 @@ class LlmAggregates
                 AVG(CASE WHEN s.llm_post_type = 'news' THEN 1.0 WHEN s.llm_post_type IS NULL THEN NULL ELSE 0.0 END) AS news_share,
                 AVG(CASE WHEN s.llm_post_type IS NULL THEN NULL WHEN s.llm_catalyst THEN 1.0 ELSE 0.0 END) AS catalyst_share
             FROM post_ticker_mentions m
+            {$gate}
             LEFT JOIN post_sentiments s
                 ON s.raw_post_id = m.raw_post_id AND s.llm_post_type IS NOT NULL
             WHERE m.posted_at >= ? AND m.posted_at < ?

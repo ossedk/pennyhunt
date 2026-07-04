@@ -6,7 +6,9 @@ use App\Models\BacktestRun;
 use App\Services\Features\LlmAggregates;
 use App\Services\Features\MarketIntelligence;
 use App\Services\Signals\SignalMath;
+use App\Support\AnalyticsGate;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -125,12 +127,14 @@ class Backtester
      * epoch-day index. Sparse — silent days are implicit zeros so memory stays
      * flat regardless of window length × ticker count.
      *
-     * @return \Illuminate\Support\Collection<int, array<int, array{mentions: int, authors: int, sentiment: ?float}>>
+     * @return Collection<int, array<int, array{mentions: int, authors: int, sentiment: ?float}>>
      */
-    protected function dailyTickerStats(CarbonImmutable $from, CarbonImmutable $to): \Illuminate\Support\Collection
+    protected function dailyTickerStats(CarbonImmutable $from, CarbonImmutable $to): Collection
     {
         // date() is portable between Postgres (UTC-pinned session) and SQLite (tests).
-        $rows = DB::select(<<<'SQL'
+        $gate = AnalyticsGate::sourceJoin('p');
+
+        $rows = DB::select(<<<SQL
             SELECT
                 m.ticker_id,
                 date(m.posted_at) AS day,
@@ -139,6 +143,7 @@ class Backtester
                 AVG(s.lexicon_score) AS sentiment
             FROM post_ticker_mentions m
             JOIN raw_posts p ON p.id = m.raw_post_id
+            {$gate}
             LEFT JOIN post_sentiments s ON s.raw_post_id = p.id
             JOIN tickers t ON t.id = m.ticker_id AND t.is_active
             WHERE m.posted_at >= ? AND m.posted_at < ?

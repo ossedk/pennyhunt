@@ -88,6 +88,13 @@ PollTwitterViaApify → ApifyClient (apidojo/twitter-scraper-lite, event-priced)
   rescues). Second layer: LlmPostClassifier emits off_topic; true on a twitter
   post deletes its post_ticker_mentions (crypto token sharing the $symbol
   must not count as stock mentions).
+  ANALYTICS QUARANTINE (2026-07-04): tweets are display-only. AnalyticsGate
+  (config pennyhunt.analytics.include_twitter, default false) excludes
+  twitter mentions from BuildTickerMetrics rollups/z-scores, Backtester
+  daily stats, MarketIntelligence mention features and LlmAggregates —
+  so neither live signals nor GBM training see twitter data until it is
+  validated. UI feed/ticker tape and the verified-voices panel still show
+  tweets.
 
 PollRedditSubreddit → RedditClient (app-only OAuth, fallback) → RedditIngestor
   → raw_posts (dedupe on source+external_id) + authors

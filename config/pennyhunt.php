@@ -68,6 +68,21 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Analytics source gating
+    |--------------------------------------------------------------------------
+    | While Twitter/X data quality is unproven (bots, crypto-cashtag
+    | collisions, parody accounts), tweets are DISPLAY-ONLY: they appear in
+    | the feed/ticker tape but are excluded from ticker metric rollups,
+    | z-scores, live signal computation, backtest daily stats, LLM feature
+    | aggregates and (therefore) GBM training data. Flip to true only after
+    | Twitter data has been validated against backtest outcomes.
+    */
+    'analytics' => [
+        'include_twitter' => (bool) env('PENNYHUNT_TWITTER_IN_ANALYTICS', false),
+    ],
+
     // Subreddits polled by the ingestion scheduler. Each becomes a source row.
     'subreddits' => [
         'pennystocks',

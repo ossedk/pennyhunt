@@ -3,6 +3,7 @@
 namespace App\Services\Features;
 
 use App\Models\SecFiling;
+use App\Support\AnalyticsGate;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -409,9 +410,12 @@ class MarketIntelligence
     /** @param array<int, int> $tickerIds */
     protected function loadTickerMentions(array $tickerIds, string $from, string $to): void
     {
-        $rows = DB::select(<<<'SQL'
+        $gate = AnalyticsGate::mentionJoin('m');
+
+        $rows = DB::select(<<<SQL
             SELECT m.ticker_id, date(m.posted_at) AS day, COUNT(*) AS mentions
             FROM post_ticker_mentions m
+            {$gate}
             WHERE m.posted_at >= ? AND m.posted_at < ?
             GROUP BY m.ticker_id, day
         SQL, [gmdate('Y-m-d', strtotime($from.' UTC') - 10 * 86400), gmdate('Y-m-d', strtotime($to.' UTC') + 86400)]);
@@ -427,10 +431,13 @@ class MarketIntelligence
 
     protected function loadSiteMentions(string $from, string $to): void
     {
-        $rows = DB::select(<<<'SQL'
-            SELECT date(posted_at) AS day, COUNT(*) AS mentions
-            FROM post_ticker_mentions
-            WHERE posted_at >= ? AND posted_at < ?
+        $gate = AnalyticsGate::mentionJoin('m');
+
+        $rows = DB::select(<<<SQL
+            SELECT date(m.posted_at) AS day, COUNT(*) AS mentions
+            FROM post_ticker_mentions m
+            {$gate}
+            WHERE m.posted_at >= ? AND m.posted_at < ?
             GROUP BY day
         SQL, [gmdate('Y-m-d', strtotime($from.' UTC') - 35 * 86400), gmdate('Y-m-d', strtotime($to.' UTC') + 86400)]);
 

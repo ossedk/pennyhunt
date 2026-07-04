@@ -87,6 +87,46 @@ it('returns the neutral zero vector for days without classified posts', function
         ->and($llm->features($ticker->id, '2026-06-03'))->toBe(array_fill_keys(LlmAggregates::FEATURE_KEYS, 0.0));
 });
 
+it('excludes twitter posts from aggregates until analytics inclusion is enabled', function () {
+    $reddit = Source::create([
+        'key' => 'reddit:aggtw', 'type' => 'reddit', 'name' => 'r/aggtw',
+        'enabled' => true, 'poll_interval_seconds' => 120, 'config' => [],
+    ]);
+    $twitter = Source::create([
+        'key' => 'twitter:cashtags', 'type' => 'twitter', 'name' => 'X/Twitter',
+        'enabled' => true, 'poll_interval_seconds' => 3600, 'config' => [],
+    ]);
+    $author = Author::create(['platform' => 'reddit', 'username' => 'aggtw', 'stats' => []]);
+    $tweeter = Author::create(['platform' => 'twitter', 'username' => 'aggtweeter', 'stats' => []]);
+    $ticker = Ticker::create(['symbol' => 'TWGT', 'name' => 'Twitter Gate', 'is_active' => true]);
+
+    aggPost($reddit, $author, $ticker, '2026-06-01 10:00:00', [
+        'llm_post_type' => 'dd', 'llm_direction' => 'bullish', 'llm_conviction' => 0.8,
+        'llm_pump_suspicion' => 0.1, 'llm_catalyst' => true,
+    ]);
+    aggPost($twitter, $tweeter, $ticker, '2026-06-01 11:00:00', [
+        'llm_post_type' => 'hype', 'llm_direction' => 'bearish', 'llm_conviction' => 1.0,
+        'llm_pump_suspicion' => 1.0, 'llm_catalyst' => false,
+    ]);
+
+    // Default: twitter is display-only — only the reddit post counts.
+    $features = LlmAggregates::load([$ticker->id], '2026-06-01', '2026-06-01')
+        ->features($ticker->id, '2026-06-01');
+
+    expect($features['llm_coverage'])->toEqual(1.0)
+        ->and($features['llm_direction'])->toEqual(1.0)
+        ->and($features['llm_hype_share'])->toEqual(0.0);
+
+    // Opt-in flag folds twitter back into the aggregates.
+    config(['pennyhunt.analytics.include_twitter' => true]);
+
+    $features = LlmAggregates::load([$ticker->id], '2026-06-01', '2026-06-01')
+        ->features($ticker->id, '2026-06-01');
+
+    expect($features['llm_direction'])->toEqual(0.0)
+        ->and($features['llm_hype_share'])->toEqual(0.5);
+});
+
 it('does not leak posts across day or ticker boundaries', function () {
     $source = Source::create([
         'key' => 'reddit:agg3', 'type' => 'reddit', 'name' => 'r/agg3',
