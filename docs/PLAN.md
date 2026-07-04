@@ -366,10 +366,11 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   **Decision 2026-07-04: the classification backfill moves to a server**
   (local runs kept dying with the laptop/IDE sessions). The command is
   idempotent and restartable — already-classified posts are skipped on
-  re-invocation, so run on the server under nohup/systemd/supervisor:
-  `php artisan pennyhunt:classify-posts --run=32 --limit=140000`.
-  At ~2.5 posts/s (rate-limit sleep) the remainder is ~15h of runtime;
-  requires `OPENAI_API_KEY` + `PENNYHUNT_LLM_MAX_PER_DAY` sized to match.
+  re-invocation. **DONE 2026-07-04 evening: production moved to the Forge
+  server** (see `docs/DEPLOYMENT.md`) and the backfill now runs there as
+  the `pennyhunt-classify-backfill` systemd user unit
+  (`~/run-classify-backfill.sh` loops `classify-posts --limit=2000` until
+  the candidate set is exhausted; ~133k posts remaining at launch).
   **Nightly shadow retrain scheduled (07:00/07:15, NO auto-activation)**
   — feature refresh + inactive GBM import daily, so LLM-feature
   importance is observable as coverage climbs (`storage/logs/ml-nightly.log`).

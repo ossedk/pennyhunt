@@ -1,10 +1,13 @@
 # Pennyhunt — Architecture
 
-> Last updated: 2026-07-03
+> Last updated: 2026-07-04
 > Status: Phase 0–1 implemented, plus lexicon sentiment + rollups + signal engine v1
 > with backtest-validated market gate + live confidence scoring (Phase 2/3),
 > backtesting v4 with exit simulation, walk-forward confidence and Kelly
 > portfolio simulation (Phase 4 in progress).
+> **Production is LIVE at https://pennyhunt.wecode.dev** — see
+> `docs/DEPLOYMENT.md` for the Forge server layout, user-space Postgres 16,
+> systemd user units (Horizon/Reverb/backfill) and deploy procedure.
 
 ## Stack
 
