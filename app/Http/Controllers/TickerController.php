@@ -13,6 +13,7 @@ use App\Models\RawPost;
 use App\Models\Ticker;
 use App\Models\TickerMetric;
 use App\Models\TickerNews;
+use App\Models\Watchlist;
 use App\Services\Features\MarketIntelligence;
 use App\Services\Features\SectorHeat;
 use App\Services\Features\TechnicalFeatures;
@@ -169,6 +170,10 @@ class TickerController extends Controller
 
         return Inertia::render('tickers/show', [
             'ticker' => $ticker->only(['id', 'symbol', 'name', 'exchange', 'tier', 'market_cap', 'last_price', 'is_ambiguous']),
+            'isWatched' => Watchlist::query()
+                ->where('user_id', request()->user()->id)
+                ->whereHas('tickers', fn ($q) => $q->whereKey($ticker->id))
+                ->exists(),
             'profile' => $profile?->only([
                 'description', 'sic_description', 'homepage_url', 'primary_exchange', 'city', 'state',
                 'total_employees', 'list_date', 'market_cap', 'shares_outstanding',

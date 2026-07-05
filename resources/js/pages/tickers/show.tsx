@@ -1,5 +1,5 @@
-import { Head } from '@inertiajs/react';
-import { ExternalLink } from 'lucide-react';
+import { Head, router } from '@inertiajs/react';
+import { ExternalLink, Star } from 'lucide-react';
 import {
     Bar,
     CartesianGrid,
@@ -18,6 +18,7 @@ import { InfoTip } from '@/components/pennyhunt/info-tip';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { radar } from '@/routes';
+import { destroy as watchlistDestroy, store as watchlistStore } from '@/routes/watchlists';
 
 type SeriesPoint = {
     bucket: string;
@@ -150,6 +151,7 @@ type Props = {
         forward_return_5d: number | null;
     }[];
     marketStatus: MarketStatus | null;
+    isWatched: boolean;
     news: {
         id: number;
         publisher: string | null;
@@ -247,8 +249,17 @@ export default function TickerShow({
     aggregatorHistory,
     signals,
     marketStatus,
+    isWatched,
     news,
 }: Props) {
+    const toggleWatch = () => {
+        if (isWatched) {
+            router.delete(watchlistDestroy(ticker.id).url, { preserveScroll: true, preserveState: true });
+        } else {
+            router.post(watchlistStore().url, { symbol: ticker.symbol }, { preserveScroll: true, preserveState: true });
+        }
+    };
+
     // Signal markers snapped to the last session on/before each fire date.
     const signalMarkers = signals
         .map((signal) => {
@@ -286,6 +297,20 @@ export default function TickerShow({
                     <div className="flex flex-col gap-1">
                         <div className="flex flex-wrap items-center gap-2">
                             <h1 className="font-mono text-3xl leading-none font-bold">${ticker.symbol}</h1>
+                            <button
+                                type="button"
+                                onClick={toggleWatch}
+                                title={isWatched ? 'Remove from watchlist' : 'Add to watchlist'}
+                                className="rounded-md p-1 transition-colors hover:bg-accent"
+                            >
+                                <Star
+                                    className={
+                                        isWatched
+                                            ? 'size-5 fill-amber-400 text-amber-400'
+                                            : 'size-5 text-muted-foreground hover:text-amber-400'
+                                    }
+                                />
+                            </button>
                             {(profile?.primary_exchange ?? ticker.exchange) && (
                                 <Badge variant="outline">{profile?.primary_exchange ?? ticker.exchange}</Badge>
                             )}

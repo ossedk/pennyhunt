@@ -20,6 +20,8 @@ class ClassifyHistoricalPosts extends Command
     protected $signature = 'pennyhunt:classify-posts
         {--run= : Backtest run whose candidate days define the target set (default: latest done)}
         {--limit=1000 : Max posts to classify this invocation}
+        {--workers=1 : Total parallel workers (modulo sharding on post id)}
+        {--worker=0 : This worker\'s shard index (0-based)}
         {--dry-run : Count the target set without spending}';
 
     protected $description = 'LLM-classify historical posts on backtest candidate days (targeted, cost-bounded)';
@@ -42,8 +44,12 @@ class ClassifyHistoricalPosts extends Command
             return self::FAILURE;
         }
 
+        $workers = max(1, (int) $this->option('workers'));
+        $worker = (int) $this->option('worker');
+
         // Posts mentioning a ticker on one of the run's candidate days,
-        // not yet LLM-classified.
+        // not yet LLM-classified. Modulo sharding on post id lets N workers
+        // run concurrently on disjoint sets — no locking needed.
         $query = DB::table('raw_posts as p')
             ->join('post_ticker_mentions as m', 'm.raw_post_id', '=', 'p.id')
             ->join('backtest_events as e', function ($join) use ($run): void {
@@ -53,11 +59,13 @@ class ClassifyHistoricalPosts extends Command
             })
             ->leftJoin('post_sentiments as s', 's.raw_post_id', '=', 'p.id')
             ->whereNull('s.llm_post_type')
+            ->when($workers > 1, fn ($q) => $q->whereRaw('p.id % ? = ?', [$workers, $worker]))
             ->distinct()
             ->select('p.id');
 
         $total = $query->count('p.id');
-        $this->info("Run #{$run->id}: {$total} unclassified candidate-day posts.");
+        $shard = $workers > 1 ? " (shard {$worker}/{$workers})" : '';
+        $this->info("Run #{$run->id}: {$total} unclassified candidate-day posts{$shard}.");
 
         if ($this->option('dry-run')) {
             return self::SUCCESS;
