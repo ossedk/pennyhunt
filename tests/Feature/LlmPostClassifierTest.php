@@ -2,8 +2,10 @@
 
 use App\Models\Author;
 use App\Models\PostSentiment;
+use App\Models\PostTickerMention;
 use App\Models\RawPost;
 use App\Models\Source;
+use App\Models\Ticker;
 use App\Services\Nlp\LlmPostClassifier;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -132,13 +134,13 @@ it('deletes ticker mentions when a tweet is classified off-topic', function () {
         'key' => 'twitter:cashtags', 'type' => 'twitter', 'name' => 'X',
         'enabled' => true, 'poll_interval_seconds' => 3600, 'config' => [],
     ]);
-    $ticker = App\Models\Ticker::create(['symbol' => 'ABCD', 'name' => 'Abcd Corp', 'is_active' => true]);
+    $ticker = Ticker::create(['symbol' => 'ABCD', 'name' => 'Abcd Corp', 'is_active' => true]);
     $tweet = RawPost::create([
         'source_id' => $source->id, 'external_id' => 'tw_offtopic', 'kind' => 'post',
         'body' => '$ABCD token airdrop distribution starts today for early stakers',
         'score' => 40, 'num_comments' => 2, 'posted_at' => now(), 'ingested_at' => now(), 'meta' => [],
     ]);
-    App\Models\PostTickerMention::create([
+    PostTickerMention::create([
         'raw_post_id' => $tweet->id, 'ticker_id' => $ticker->id,
         'method' => 'cashtag', 'confidence' => 1.0, 'posted_at' => now(),
     ]);
@@ -160,5 +162,75 @@ it('deletes ticker mentions when a tweet is classified off-topic', function () {
     app(LlmPostClassifier::class)->classifyAndStore($tweet);
 
     expect(PostSentiment::first()->llm_off_topic)->toBeTrue()
-        ->and(App\Models\PostTickerMention::count())->toBe(0);
+        ->and(PostTickerMention::count())->toBe(0);
+});
+
+it('prunes bare-word mentions the model rejects but keeps cashtags and verdicts it confirms', function () {
+    config(['pennyhunt.llm.openai_api_key' => 'sk-test', 'pennyhunt.llm.openai_model' => 'gpt-5-mini']);
+
+    $now = Ticker::create(['symbol' => 'NOW', 'name' => 'ServiceNow', 'is_active' => true]);
+    $hit = Ticker::create(['symbol' => 'HIT', 'name' => 'Health In Tech', 'is_active' => true]);
+    $gme = Ticker::create(['symbol' => 'GME', 'name' => 'GameStop', 'is_active' => true]);
+
+    $post = llmPost();
+
+    // $NOW = explicit cashtag; HIT = bare word ("hit the bottom");
+    // GME = bare word the model confirms as genuinely discussed.
+    foreach ([[$now, 'cashtag', 1.0], [$hit, 'symbol', 0.7], [$gme, 'symbol', 0.7]] as [$ticker, $method, $conf]) {
+        PostTickerMention::create([
+            'raw_post_id' => $post->id, 'ticker_id' => $ticker->id,
+            'method' => $method, 'confidence' => $conf, 'posted_at' => now(),
+        ]);
+    }
+
+    Http::fake([
+        'api.openai.com/*' => Http::response([
+            'choices' => [[
+                'message' => [
+                    'content' => json_encode([
+                        'post_type' => 'technical', 'direction' => 0.5, 'conviction' => 0.5,
+                        'pump_suspicion' => 0.2, 'catalyst' => false, 'off_topic' => false,
+                        'relevant_tickers' => ['NOW', 'GME'],
+                        'reasoning' => 'HIT is the verb, not the stock.',
+                    ]),
+                ],
+            ]],
+        ]),
+    ]);
+
+    app(LlmPostClassifier::class)->classifyAndStore($post);
+
+    $symbols = PostTickerMention::with('ticker')->get()->map(fn ($m) => $m->ticker->symbol)->sort()->values();
+
+    expect($symbols->all())->toBe(['GME', 'NOW']);
+});
+
+it('does not prune when the model omits relevant_tickers', function () {
+    config(['pennyhunt.llm.openai_api_key' => 'sk-test', 'pennyhunt.llm.openai_model' => 'gpt-5-mini']);
+
+    $hit = Ticker::create(['symbol' => 'HIT', 'name' => 'Health In Tech', 'is_active' => true]);
+    $post = llmPost();
+
+    PostTickerMention::create([
+        'raw_post_id' => $post->id, 'ticker_id' => $hit->id,
+        'method' => 'symbol', 'confidence' => 0.7, 'posted_at' => now(),
+    ]);
+
+    Http::fake([
+        'api.openai.com/*' => Http::response([
+            'choices' => [[
+                'message' => [
+                    'content' => json_encode([
+                        'post_type' => 'dd', 'direction' => 0.3, 'conviction' => 0.5,
+                        'pump_suspicion' => 0.1, 'catalyst' => false, 'off_topic' => false,
+                        'reasoning' => 'Old-style output without the key.',
+                    ]),
+                ],
+            ]],
+        ]),
+    ]);
+
+    app(LlmPostClassifier::class)->classifyAndStore($post);
+
+    expect(PostTickerMention::count())->toBe(1);
 });

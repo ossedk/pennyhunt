@@ -99,7 +99,13 @@ PollTwitterViaApify → ApifyClient (apidojo/twitter-scraper-lite, event-priced)
 PollRedditSubreddit → RedditClient (app-only OAuth, fallback) → RedditIngestor
   → raw_posts (dedupe on source+external_id) + authors
   → ProcessRawPost per new post                                    [queue: pipeline]
-      ├─ TickerExtractor → post_ticker_mentions (confidence-tiered)
+      ├─ TickerExtractor → post_ticker_mentions (confidence-tiered:
+      │  1.0 cashtag — the only tier for tweets; 0.7 bare non-word symbol
+      │  with ALL-CAPS-shouting guard; 0.5 symbol_ctx — English-word
+      │  symbols (HIT, META, COIN — resources/data/common-english-words.txt)
+      │  need an adjacent finance cue. LLM relevant_tickers verdict later
+      │  prunes bare-word mentions it rejects; pennyhunt:reextract-mentions
+      │  re-judges history after rule changes)
       ├─ LexiconSentiment → post_sentiments.lexicon_score
       └─ ClassifyPostWithLlm (only if OPENAI_API_KEY or ANTHROPIC_API_KEY set,
          post mentions a ticker, ≥40 chars, under PENNYHUNT_LLM_MAX_PER_DAY) →

@@ -22,6 +22,7 @@ You classify retail stock-forum posts (Reddit/X) about penny stocks. Respond wit
 - "pump_suspicion": float 0.0 to 1.0 — coordinated promotion markers (new account vibes, copy-paste promo, unrealistic price targets, urgency, "load up before...")
 - "catalyst": boolean — does the post claim a specific upcoming catalyst (FDA date, earnings, merger, contract)?
 - "off_topic": boolean — true when the post is NOT about the listed stock, most commonly a crypto memecoin that shares the $SYMBOL. Set true if ANY memecoin tell is present: "CA" or a contract address (Solana addresses are 32-44 base58 chars, often referenced by their prefix); PumpFun/Moby/Raydium/DEX platforms; "CTO"/community takeover; airdrop, holders/holder count, on-chain lore; crypto KOL names or cashtags (e.g. Ansem/$ANSEM/@blknoiz06); "MC"/market-cap talk in millions when the ticker context shows a company worth billions (memecoins measure success in $1M-$100M MC — "millions MC", "million coded", "$100 million potential" for a multi-billion company means the coin, not the stock). Plain hype about the actual stock (shares, squeeze, options, earnings) is NOT off_topic.
+- "relevant_tickers": array of symbols, drawn ONLY from the candidate list in the ticker context, that this post genuinely discusses as stocks. Judge each candidate independently and EXCLUDE it when its symbol merely appears as an English word or acronym in the sentence ("$NOW HIT THE BOTTOM" discusses NOW, not HIT; "the CEO said" is not $CEO), when it refers to a different company or a crypto coin, or when it is part of a spammed cashtag list the author says nothing specific about. Include a candidate the author actually analyzes, trades or hypes.
 - "reasoning": one short sentence
 PROMPT;
 
@@ -69,15 +70,40 @@ PROMPT;
             ],
         );
 
-        // Off-topic tweets (crypto token sharing the $symbol, airdrop promo)
-        // must not count as ticker mentions — they poison mention velocity.
-        // Twitter-only: Reddit's subreddit context makes false positives more
-        // likely than real crypto collisions there.
-        if ($result['off_topic'] && $post->source?->type === 'twitter') {
-            $post->mentions()->delete();
-        }
+        $this->pruneMentions($post, $result);
 
         return true;
+    }
+
+    /**
+     * Mention hygiene from the LLM verdict — false mentions poison mention
+     * velocity, z-scores AND the posts shown on ticker pages.
+     *
+     *  - off_topic tweet → drop every mention (crypto coin sharing the $tag)
+     *  - relevant_tickers returned → drop bare-word mentions (method !=
+     *    cashtag) whose symbol the model rejected. Cashtags survive on
+     *    non-twitter sources: an explicit $TAG is the author's own claim,
+     *    the LLM only vetoes weaker bare-word matches there.
+     *
+     * @param  array{off_topic: bool, relevant_tickers: list<string>|null}  $result
+     */
+    protected function pruneMentions(RawPost $post, array $result): void
+    {
+        if ($result['off_topic'] && $post->source?->type === 'twitter') {
+            $post->mentions()->delete();
+
+            return;
+        }
+
+        // null = model omitted the key (old cached outputs) → don't prune.
+        if ($result['relevant_tickers'] === null) {
+            return;
+        }
+
+        $post->mentions()
+            ->where('method', '<>', 'cashtag')
+            ->whereHas('ticker', fn ($q) => $q->whereNotIn('symbol', $result['relevant_tickers']))
+            ->delete();
     }
 
     /**
@@ -102,14 +128,14 @@ PROMPT;
             });
 
         $context = $tickers->isNotEmpty()
-            ? "[Ticker context — the listed stocks these cashtags refer to: {$tickers->implode('; ')}]\n\n"
+            ? "[Ticker context — candidate stocks detected in this post (some may be false matches on common words): {$tickers->implode('; ')}]\n\n"
             : '';
 
         return $context.$post->fullText();
     }
 
     /**
-     * @return array{post_type: string, direction: float, conviction: float, pump_suspicion: float, catalyst: bool, off_topic: bool, reasoning: string}|null
+     * @return array{post_type: string, direction: float, conviction: float, pump_suspicion: float, catalyst: bool, off_topic: bool, relevant_tickers: list<string>|null, reasoning: string}|null
      */
     public function classify(string $text): ?array
     {
@@ -140,6 +166,10 @@ PROMPT;
             'pump_suspicion' => max(0.0, min(1.0, (float) ($json['pump_suspicion'] ?? 0))),
             'catalyst' => (bool) ($json['catalyst'] ?? false),
             'off_topic' => (bool) ($json['off_topic'] ?? false),
+            // null (key absent) means "no verdict" — callers must not prune.
+            'relevant_tickers' => isset($json['relevant_tickers']) && is_array($json['relevant_tickers'])
+                ? array_values(array_map(fn ($s): string => strtoupper((string) $s), $json['relevant_tickers']))
+                : null,
             'reasoning' => (string) ($json['reasoning'] ?? ''),
         ];
     }

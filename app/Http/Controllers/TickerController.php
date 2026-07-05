@@ -51,6 +51,7 @@ class TickerController extends Controller
 
         $posts = RawPost::query()
             ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $ticker->id))
+            ->whereDoesntHave('sentiment', fn ($q) => $q->where('llm_off_topic', true))
             ->with([
                 'source:id,key,name',
                 'author:id,username,karma,pump_risk_score',
@@ -65,7 +66,10 @@ class TickerController extends Controller
         // Empty until the Apify Twitter poller is enabled (paid plan).
         $tweets = RawPost::query()
             ->whereHas('source', fn ($q) => $q->where('type', 'twitter'))
-            ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $ticker->id))
+            // Cashtag-only: a tweet counts for this ticker only when the
+            // author explicitly wrote $SYMBOL ("$NOW HIT THE BOTTOM" must
+            // never appear on the HIT page).
+            ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $ticker->id)->where('method', 'cashtag'))
             ->whereHas('author', fn ($q) => $q->where('stats->is_verified', true))
             // Like floor + LLM off-topic verdict (crypto token sharing the
             // $symbol, airdrop promos) keep the panel human and on-topic.

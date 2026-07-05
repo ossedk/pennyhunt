@@ -424,6 +424,22 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   open / pre-market / after-hours / closed as a `MarketStatusBadge` on
   the ticker page, signal cockpit and blotter, so quotes and unrealized
   P&L are always read with session context.
+- ✅ **Mention precision overhaul (2026-07-05)** — "$NOW HIT THE BOTTOM"
+  was counting as a $HIT mention. Four layers, extraction → display:
+  (1) `TickerExtractor` — tweets are cashtag-only; bare-word matches get
+  a shouting guard (≥60% ALL-CAPS neighbors → drop) and symbols colliding
+  with the top-10k-∩-dictionary English wordlist
+  (`resources/data/common-english-words.txt`, 2.2k words) need an
+  adjacent finance cue ("HIT shares", "sold META") to count at a new
+  0.5 `symbol_ctx` tier; (2) LLM classifier now returns
+  `relevant_tickers` (closed candidate list) and prunes bare-word
+  mentions it rejects — cashtags survive on Reddit, off-topic tweets
+  still lose everything; (3) ticker page: tweets require a cashtag
+  mention, buzz posts exclude `llm_off_topic`; (4)
+  `pennyhunt:reextract-mentions` re-judged history (prod purge run
+  2026-07-05) and rebuilt 60d of `ticker_metrics`, so mention counts,
+  z-scores and GBM training data all cleaned up. Tests: extractor (8),
+  classifier pruning (7).
 - ✅ **The Desk + global search + news + on-demand X (2026-07-05)** — new
   landing dashboard (`/dashboard`, also `/`): LLM-written market brief
   (`MarketBriefWriter`, closed-world context from our own aggregates,

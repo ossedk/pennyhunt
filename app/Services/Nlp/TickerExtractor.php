@@ -6,20 +6,43 @@ use App\Models\Ticker;
 use Illuminate\Support\Facades\Cache;
 
 /**
- * Extracts ticker mentions from forum text.
+ * Extracts ticker mentions from forum text — precision first: a false
+ * mention poisons mention velocity, z-scores, signals AND the posts shown
+ * on a ticker page ("$NOW HIT THE BOTTOM" must never count for $HIT).
  *
  * Confidence tiers:
- *  - 1.0  $CASHTAG (explicit)
- *  - 0.7  bare uppercase symbol validated against the active ticker universe
- *  - bare matches of ambiguous symbols (CEO, DD, YOLO...) are dropped entirely;
- *    those only count as cashtags.
+ *  - 1.0  $CASHTAG (explicit; the only tier allowed for tweets)
+ *  - 0.7  bare uppercase symbol that is NOT an English word (TSLA, ASTS)
+ *  - 0.5  bare uppercase symbol that IS an English word (META, COIN, HIT),
+ *         rescued only by an adjacent finance cue ("META calls",
+ *         "bought COIN", "HIT stock")
+ *
+ * Guards on all bare matches:
+ *  - curated ambiguous list (CEO, DD, YOLO...) → cashtag-only, no rescue
+ *  - shouting guard: inside an ALL-CAPS run ("$NOW HIT THE BOTTOM AT $89")
+ *    capitalization carries no signal, so bare matches are dropped
  */
 class TickerExtractor
 {
     /**
+     * Words that, when directly adjacent to an English-word symbol, signal
+     * the token is used as a ticker ("HIT stock", "sold META", "COIN calls").
+     */
+    protected const FINANCE_CUES = [
+        'stock', 'stocks', 'share', 'shares', 'ticker', 'calls', 'puts', 'options',
+        'warrants', 'earnings', 'dilution', 'offering', 'float', 'squeeze', 'shorts',
+        'buy', 'bought', 'buying', 'sell', 'sold', 'selling', 'long', 'short',
+        'hold', 'holding', 'held', 'add', 'added', 'adding', 'trim', 'trimmed',
+        'position', 'entry', 'exit', 'pt', 'target', 'dd', 'yolo', 'moon',
+    ];
+
+    /**
+     * @param  string|null  $sourceType  'twitter' restricts to cashtags: tweets
+     *                                   use $cashtags by convention, so bare
+     *                                   uppercase words there are shouting, not tickers.
      * @return array<string, array{confidence: float, method: string}> keyed by symbol
      */
-    public function extract(string $text): array
+    public function extract(string $text, ?string $sourceType = null): array
     {
         if (trim($text) === '') {
             return [];
@@ -36,21 +59,81 @@ class TickerExtractor
             }
         }
 
-        // Tier 2: bare uppercase words that are valid, unambiguous symbols
-        preg_match_all('/(?<![\$\w])([A-Z]{2,5})(?![\w])/', $text, $bareMatches);
-        foreach (array_unique($bareMatches[1]) as $symbol) {
-            if (isset($found[$symbol])) {
+        if ($sourceType === 'twitter') {
+            return $found;
+        }
+
+        // Tier 2/3: bare uppercase words validated against the universe
+        preg_match_all('/(?<![\$\w])([A-Z]{2,5})(?![\w])/', $text, $bareMatches, PREG_OFFSET_CAPTURE);
+
+        foreach ($bareMatches[1] as [$symbol, $offset]) {
+            if (isset($found[$symbol]) || $this->isAmbiguous($symbol) || ! $this->isKnownSymbol($symbol)) {
                 continue;
             }
-            if ($this->isAmbiguous($symbol)) {
+
+            if ($this->isShoutingContext($text, $offset, $symbol)) {
                 continue;
             }
-            if ($this->isKnownSymbol($symbol)) {
+
+            if (! $this->isEnglishWord($symbol)) {
                 $found[$symbol] = ['confidence' => 0.7, 'method' => 'symbol'];
+
+                continue;
+            }
+
+            if ($this->hasAdjacentFinanceCue($text, $offset, $symbol)) {
+                $found[$symbol] = ['confidence' => 0.5, 'method' => 'symbol_ctx'];
             }
         }
 
         return $found;
+    }
+
+    /**
+     * True when the words around the candidate are themselves mostly
+     * ALL-CAPS — capitalization carries no ticker signal inside shouting.
+     */
+    protected function isShoutingContext(string $text, int $offset, string $symbol): bool
+    {
+        $window = substr($text, max(0, $offset - 60), 60 + strlen($symbol) + 60);
+
+        preg_match_all('/[A-Za-z]{2,}/', $window, $words);
+
+        $neighbors = array_values(array_filter($words[0], fn (string $w): bool => strtoupper($w) !== $symbol));
+
+        if (count($neighbors) < 2) {
+            return false;
+        }
+
+        $caps = count(array_filter($neighbors, fn (string $w): bool => $w === strtoupper($w)));
+
+        return $caps / count($neighbors) >= 0.6;
+    }
+
+    /**
+     * True when one of the two tokens on either side of the candidate is a
+     * finance cue — the only way an English-word symbol counts bare.
+     */
+    protected function hasAdjacentFinanceCue(string $text, int $offset, string $symbol): bool
+    {
+        $before = substr($text, max(0, $offset - 40), min($offset, 40));
+        $after = substr($text, $offset + strlen($symbol), 40);
+
+        preg_match_all('/[A-Za-z]+/', $before, $b);
+        preg_match_all('/[A-Za-z]+/', $after, $a);
+
+        $adjacent = [
+            ...array_slice($b[0], -2),
+            ...array_slice($a[0], 0, 2),
+        ];
+
+        foreach ($adjacent as $word) {
+            if (in_array(strtolower($word), self::FINANCE_CUES, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function isKnownSymbol(string $symbol): bool
@@ -61,6 +144,27 @@ class TickerExtractor
     protected function isAmbiguous(string $symbol): bool
     {
         return in_array($symbol, config('pennyhunt.ambiguous_symbols'), true);
+    }
+
+    protected function isEnglishWord(string $symbol): bool
+    {
+        return isset($this->englishWords()[$symbol]);
+    }
+
+    /**
+     * Top-10k English words (2-5 letters, uppercased) — symbols colliding
+     * with these need contextual rescue before a bare match counts.
+     *
+     * @return array<string, true>
+     */
+    protected function englishWords(): array
+    {
+        static $words = null;
+
+        return $words ??= array_fill_keys(
+            array_filter(array_map('trim', file(resource_path('data/common-english-words.txt')) ?: [])),
+            true,
+        );
     }
 
     /**

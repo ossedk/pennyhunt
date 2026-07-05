@@ -38,9 +38,13 @@ class SyncTickerUniverse implements ShouldQueue
 
         Cache::forget('tickers:active_symbols');
 
-        // Flag symbols colliding with common words so bare-word mentions are ignored
+        // Flag symbols colliding with common words (curated list + top-10k
+        // English words) — the UI badge that warns "bare-word matches for
+        // this symbol are unreliable".
+        $englishWords = array_filter(array_map('trim', file(resource_path('data/common-english-words.txt')) ?: []));
+
         Ticker::query()
-            ->whereIn('symbol', config('pennyhunt.ambiguous_symbols'))
+            ->whereIn('symbol', [...config('pennyhunt.ambiguous_symbols'), ...$englishWords])
             ->update(['is_ambiguous' => true]);
     }
 

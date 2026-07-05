@@ -40,7 +40,8 @@ class ProcessRawPost implements ShouldQueue
 
         $text = $post->fullText();
 
-        $symbols = $extractor->extract($text);
+        // Tweets are cashtag-only: bare uppercase words there are shouting.
+        $symbols = $extractor->extract($text, $post->source?->type);
 
         // Tier 2: LLM classification for ticker-mentioning posts (key-gated,
         // daily spend cap). Tweets skip the length floor: they're short by

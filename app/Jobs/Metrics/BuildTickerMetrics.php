@@ -26,6 +26,7 @@ class BuildTickerMetrics implements ShouldQueue
 
     public function __construct(
         public string $interval, // 5m | 1h | 1d
+        public ?string $lookbackOverride = null, // e.g. '60 days' for repair rebuilds
     ) {
         $this->onQueue('metrics');
     }
@@ -38,6 +39,8 @@ class BuildTickerMetrics implements ShouldQueue
             '1d' => ['1 day', '14 days'],
             default => throw new \InvalidArgumentException("Unknown interval [{$this->interval}]"),
         };
+
+        $lookback = $this->lookbackOverride ?? $lookback;
 
         $gate = AnalyticsGate::sourceJoin('p');
 
