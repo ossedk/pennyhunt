@@ -11,6 +11,7 @@ use App\Jobs\Metrics\BuildAuthorLeaderboard;
 use App\Jobs\Metrics\BuildTickerMetrics;
 use App\Jobs\Metrics\ScoreAuthorPumpRisk;
 use App\Jobs\Metrics\ScoreAuthorTrackRecords;
+use App\Jobs\Nlp\ClassifyNewsCatalysts;
 use App\Jobs\Nlp\GenerateMarketBrief;
 use App\Jobs\Signals\ComputeSignals;
 use App\Jobs\Signals\GradeSignals;
@@ -124,6 +125,13 @@ Schedule::command('pennyhunt:sync-sec-filings --months=3 --min-mentions=2 --skip
     ->name('sync-sec-filings')
     ->onOneServer();
 
+// Form 4 insider purchases/sales — the bullish side of EDGAR. Weekly delta
+// per ticker (skip-synced-days), spread across the same mentioned universe.
+Schedule::command('pennyhunt:sync-insider-trades --months=3 --min-mentions=2 --skip-synced-days=7')
+    ->dailyAt('05:45')
+    ->name('sync-insider-trades')
+    ->onOneServer();
+
 /*
 |--------------------------------------------------------------------------
 | ML: daily LLM-feature refresh + GBM retrain (NO auto-activation)
@@ -159,6 +167,13 @@ Schedule::command('pennyhunt:train-gbm')
 */
 
 Schedule::job(new SyncTrendingNews)->hourly()->name('sync-trending-news')->onOneServer();
+
+// Catalyst-type classification for new headlines (feeds news_catalyst_7d /
+// news_offering_7d features + the UI badges). Offset from the news sync.
+Schedule::job(new ClassifyNewsCatalysts)
+    ->hourlyAt(20)
+    ->name('classify-news-catalysts')
+    ->onOneServer();
 
 Schedule::job(new GenerateMarketBrief)
     ->hourly()

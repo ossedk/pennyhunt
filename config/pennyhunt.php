@@ -109,11 +109,15 @@ return [
     'benchmark_symbol' => env('PENNYHUNT_BENCHMARK', 'IWM'),
 
     // Macro context series (Yahoo, keyless): VIX = fear gauge, BTC = retail
-    // risk-appetite proxy. Synced alongside market bars, consumed by
-    // MarketIntelligence as point-in-time features.
+    // risk-appetite proxy, SPY = large-cap anchor for the IWM-vs-SPY
+    // small-cap risk-appetite spread, XBI = biotech speculative regime.
+    // Synced alongside market bars, consumed by MarketIntelligence as
+    // point-in-time features.
     'macro_symbols' => [
         'vix' => '^VIX',
         'btc' => 'BTC-USD',
+        'spy' => 'SPY',
+        'xbi' => 'XBI',
     ],
 
     /*

@@ -98,6 +98,17 @@ PollTwitterViaApify → ApifyClient (apidojo/twitter-scraper-lite, event-priced)
 
 PollRedditSubreddit → RedditClient (app-only OAuth, fallback) → RedditIngestor
   → raw_posts (dedupe on source+external_id) + authors
+  → SyncInsiderTrades (daily 05:45) — Form 4 open-market P/S from EDGAR
+      → insider_trades → MarketIntelligence insider_buys_90d /
+      insider_net_value_90d (point-in-time by filed date)
+  → ClassifyNewsCatalysts (hourly :20) — LLM headline → catalyst_type on
+      ticker_news (fda/merger/contract/offering/...) → news_catalyst_7d /
+      news_offering_7d features + UI badges
+  → Phase D features share one code path for research + live:
+      TechnicalFeatures (rvol, atr_pct, range_expansion, dist_52w_high,
+      up_streak, gap_open — from market_bars), SectorHeat (SIC-group
+      sympathy: sector_heat, sector_mention_z), MarketIntelligence adds
+      smallcap_rel_20d (IWM−SPY) + xbi_ret_5d
   → BuildAuthorLeaderboard (weekly Mon 07:30)                      [queue: metrics]
       AuthorCallGrader: opens author calls from reddit mentions
       (non-bearish, 14d dedupe), grades vs market_bars (entry next open,

@@ -35,6 +35,9 @@ FEATURES = [
     "btc_ret_5d", "mention_streak",
     "llm_coverage", "llm_direction", "llm_conviction", "llm_pump_suspicion",
     "llm_dd_share", "llm_hype_share", "llm_news_share", "llm_catalyst_share",
+    "rvol", "atr_pct", "range_expansion", "dist_52w_high", "up_streak", "gap_open",
+    "sector_heat", "sector_mention_z", "smallcap_rel_20d", "xbi_ret_5d",
+    "insider_buys_90d", "insider_net_value_90d", "news_catalyst_7d", "news_offering_7d",
 ]
 MIN_TRAIN = 300
 

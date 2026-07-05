@@ -5,6 +5,8 @@ namespace App\Services\Backtesting;
 use App\Models\BacktestRun;
 use App\Services\Features\LlmAggregates;
 use App\Services\Features\MarketIntelligence;
+use App\Services\Features\SectorHeat;
+use App\Services\Features\TechnicalFeatures;
 use App\Services\Signals\SignalMath;
 use App\Support\AnalyticsGate;
 use Carbon\CarbonImmutable;
@@ -53,6 +55,9 @@ class Backtester
         'market_ret_5d', 'site_mention_z', 'vix', 'btc_ret_5d', 'mention_streak',
         'llm_coverage', 'llm_direction', 'llm_conviction', 'llm_pump_suspicion',
         'llm_dd_share', 'llm_hype_share', 'llm_news_share', 'llm_catalyst_share',
+        'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
+        'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
+        'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
         'entry_date', 'entry', 'return_1d', 'return_3d', 'return_5d',
         'best_close_5d', 'exit_return', 'exit_reason', 'exit_day', 'exit_date',
         'hit', 'classification',
@@ -78,6 +83,9 @@ class Backtester
         // LLM post-classification aggregates (phase B feature block).
         $llm = LlmAggregates::load($dailyStats->keys()->all(), $from->toDateString(), $to->toDateString());
 
+        // Sector sympathy features from the same bar arrays (phase D).
+        $sector = SectorHeat::load($dailyStats->keys()->all(), $bars, $from->toDateString(), $to->toDateString());
+
         $run->events()->delete(); // idempotent re-runs
 
         $fromIdx = self::dayIndex($from->toDateString());
@@ -97,6 +105,7 @@ class Backtester
                     ...$event,
                     ...$intel->features($tickerId, $event['day']),
                     ...$llm->features($tickerId, $event['day']),
+                    ...$sector->features($tickerId, $event['day']),
                 ];
             }
         }
@@ -361,7 +370,13 @@ class Backtester
 
         $exit = $this->simulateExit($bars, $entryIdx, $entry);
 
+        // Technical features on the signal-day bar (as-of, phase D).
+        $technicals = isset($bars[$sigIdx])
+            ? TechnicalFeatures::compute($bars, $sigIdx)
+            : array_fill_keys(TechnicalFeatures::FEATURE_KEYS, null);
+
         return [
+            ...$technicals,
             'entry_date' => $bars[$entryIdx]['date'],
             'entry' => round($entry, 4),
             'return_1d' => $returnAt(1),

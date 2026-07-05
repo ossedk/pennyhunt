@@ -65,10 +65,12 @@ class SyncCompanyProfile implements ShouldBeUnique, ShouldQueue
                 ],
             );
 
-            // Polygon's market cap is fresher than our universe sync.
-            if (isset($details['market_cap'])) {
-                $ticker->update(['market_cap' => (int) $details['market_cap']]);
-            }
+            // Polygon's market cap is fresher than our universe sync; SIC
+            // code feeds the sector-heat features.
+            $ticker->update(array_filter([
+                'market_cap' => isset($details['market_cap']) ? (int) $details['market_cap'] : null,
+                'sic_code' => isset($details['sic_code']) ? substr((string) $details['sic_code'], 0, 4) : null,
+            ]));
         } else {
             // Remember the attempt so the page doesn't re-dispatch every view.
             TickerProfile::updateOrCreate(['ticker_id' => $ticker->id], ['synced_at' => now()]);

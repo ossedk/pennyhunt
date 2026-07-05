@@ -21,25 +21,99 @@ use Illuminate\Support\Sleep;
 class EdgarClient
 {
     /**
-     * @return array<int, array{form: string, filed_at: string, accession: string}>
+     * Full submissions index: SIC industry code + the recent filing list
+     * (form, date, accession, primary document). One request serves the
+     * dilution sync, the SIC backfill AND the Form 4 index.
+     *
+     * @return array{sic: ?string, filings: array<int, array{form: string, filed_at: string, accession: string, primary_document: ?string}>}
      */
-    public function filings(int $cik): array
+    public function submissions(int $cik): array
     {
         $json = $this->get(sprintf('https://data.sec.gov/submissions/CIK%010d.json', $cik))?->json();
 
         $recent = $json['filings']['recent'] ?? null;
+        $filings = [];
 
-        if (! is_array($recent) || ! isset($recent['form'], $recent['filingDate'], $recent['accessionNumber'])) {
+        if (is_array($recent) && isset($recent['form'], $recent['filingDate'], $recent['accessionNumber'])) {
+            foreach ($recent['form'] as $i => $form) {
+                $filings[] = [
+                    'form' => (string) $form,
+                    'filed_at' => (string) $recent['filingDate'][$i],
+                    'accession' => (string) $recent['accessionNumber'][$i],
+                    'primary_document' => isset($recent['primaryDocument'][$i]) ? (string) $recent['primaryDocument'][$i] : null,
+                ];
+            }
+        }
+
+        return [
+            'sic' => isset($json['sic']) && $json['sic'] !== '' ? (string) $json['sic'] : null,
+            'filings' => $filings,
+        ];
+    }
+
+    /**
+     * @return array<int, array{form: string, filed_at: string, accession: string, primary_document: ?string}>
+     */
+    public function filings(int $cik): array
+    {
+        return $this->submissions($cik)['filings'];
+    }
+
+    /**
+     * Open-market insider transactions from a Form 4 filing (transaction
+     * codes P = purchase, S = sale; derivative legs and grants excluded).
+     *
+     * @return array<int, array{seq: int, transacted_at: ?string, owner_name: ?string, is_officer: bool, is_director: bool, code: string, shares: ?float, price: ?float}>
+     */
+    public function form4Transactions(int $cik, string $accession, string $primaryDocument): array
+    {
+        $url = sprintf(
+            'https://www.sec.gov/Archives/edgar/data/%d/%s/%s',
+            $cik,
+            str_replace('-', '', $accession),
+            $primaryDocument,
+        );
+
+        $body = $this->get($url)?->body();
+
+        if ($body === null || trim($body) === '') {
             return [];
         }
 
-        $out = [];
+        $xml = @simplexml_load_string($body);
 
-        foreach ($recent['form'] as $i => $form) {
+        if ($xml === false) {
+            return [];
+        }
+
+        $owner = $xml->reportingOwner ?? null;
+        $ownerName = $owner !== null ? trim((string) ($owner->reportingOwnerId->rptOwnerName ?? '')) : '';
+        $isOfficer = $owner !== null && trim((string) ($owner->reportingOwnerRelationship->isOfficer ?? '')) === '1';
+        $isDirector = $owner !== null && trim((string) ($owner->reportingOwnerRelationship->isDirector ?? '')) === '1';
+
+        $out = [];
+        $seq = 0;
+
+        foreach ($xml->nonDerivativeTable->nonDerivativeTransaction ?? [] as $txn) {
+            $code = strtoupper(trim((string) ($txn->transactionCoding->transactionCode ?? '')));
+            $seq++;
+
+            if (! in_array($code, ['P', 'S'], true)) {
+                continue;
+            }
+
+            $shares = (string) ($txn->transactionAmounts->transactionShares->value ?? '');
+            $price = (string) ($txn->transactionAmounts->transactionPricePerShare->value ?? '');
+
             $out[] = [
-                'form' => (string) $form,
-                'filed_at' => (string) $recent['filingDate'][$i],
-                'accession' => (string) $recent['accessionNumber'][$i],
+                'seq' => $seq,
+                'transacted_at' => trim((string) ($txn->transactionDate->value ?? '')) ?: null,
+                'owner_name' => $ownerName !== '' ? $ownerName : null,
+                'is_officer' => $isOfficer,
+                'is_director' => $isDirector,
+                'code' => $code,
+                'shares' => is_numeric($shares) ? (float) $shares : null,
+                'price' => is_numeric($price) ? (float) $price : null,
             ];
         }
 

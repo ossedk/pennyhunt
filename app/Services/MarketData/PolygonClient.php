@@ -60,6 +60,25 @@ class PolygonClient
         return $response?->json('results') ?? [];
     }
 
+    /**
+     * Historical news window for backfills (max 1000 per call).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function newsBetween(string $symbol, string $from, string $to, int $limit = 1000): array
+    {
+        $response = $this->get('/v2/reference/news', [
+            'ticker' => strtoupper($symbol),
+            'published_utc.gte' => $from,
+            'published_utc.lte' => $to,
+            'order' => 'desc',
+            'sort' => 'published_utc',
+            'limit' => min($limit, 1000),
+        ]);
+
+        return $response?->json('results') ?? [];
+    }
+
     /** @param array<string, mixed> $query */
     protected function get(string $path, array $query = []): ?Response
     {

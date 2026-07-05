@@ -36,6 +36,11 @@ class ConfidenceTrainer
         // Coverage first so the model can learn to discount thin days.
         'llm_coverage', 'llm_direction', 'llm_conviction', 'llm_pump_suspicion',
         'llm_dd_share', 'llm_hype_share', 'llm_news_share', 'llm_catalyst_share',
+        // Phase D: technicals (TechnicalFeatures), sector sympathy (SectorHeat),
+        // small-cap risk appetite, insider flow, news catalysts.
+        'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
+        'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
+        'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
     ];
 
     protected const MIN_TRAIN_EVENTS = 300;
@@ -48,6 +53,9 @@ class ConfidenceTrainer
         'vix', 'btc_ret_5d', 'mention_streak',
         'llm_coverage', 'llm_direction', 'llm_conviction', 'llm_pump_suspicion',
         'llm_dd_share', 'llm_hype_share', 'llm_news_share', 'llm_catalyst_share',
+        'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
+        'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
+        'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
     ];
 
     /**
@@ -92,6 +100,23 @@ class ConfidenceTrainer
             'llm_hype_share' => (float) ($in['llm_hype_share'] ?? 0.0),
             'llm_news_share' => (float) ($in['llm_news_share'] ?? 0.0),
             'llm_catalyst_share' => (float) ($in['llm_catalyst_share'] ?? 0.0),
+            // Phase D. Null defaults are the neutral state, not zero-is-bad:
+            // rvol 1.0 = normal volume; dist_52w_high -0.5 = mid-range (0
+            // would falsely claim "at the 52w high").
+            'rvol' => isset($in['rvol']) && $in['rvol'] !== '' ? (float) $in['rvol'] : 1.0,
+            'atr_pct' => (float) ($in['atr_pct'] ?? 0.0),
+            'range_expansion' => isset($in['range_expansion']) && $in['range_expansion'] !== '' ? (float) $in['range_expansion'] : 1.0,
+            'dist_52w_high' => isset($in['dist_52w_high']) && $in['dist_52w_high'] !== '' ? (float) $in['dist_52w_high'] : -0.5,
+            'up_streak' => (float) ($in['up_streak'] ?? 0),
+            'gap_open' => (float) ($in['gap_open'] ?? 0.0),
+            'sector_heat' => (float) ($in['sector_heat'] ?? 0.0),
+            'sector_mention_z' => (float) ($in['sector_mention_z'] ?? 0.0),
+            'smallcap_rel_20d' => (float) ($in['smallcap_rel_20d'] ?? 0.0),
+            'xbi_ret_5d' => (float) ($in['xbi_ret_5d'] ?? 0.0),
+            'insider_buys_90d' => (float) ($in['insider_buys_90d'] ?? 0),
+            'insider_net_value_90d' => (float) ($in['insider_net_value_90d'] ?? 0.0),
+            'news_catalyst_7d' => empty($in['news_catalyst_7d']) ? 0.0 : 1.0,
+            'news_offering_7d' => empty($in['news_offering_7d']) ? 0.0 : 1.0,
         ];
     }
 

@@ -84,6 +84,35 @@ type Intel = {
     vix: number | null;
     btc_ret_5d: number | null;
     mention_streak: number;
+    smallcap_rel_20d: number | null;
+    xbi_ret_5d: number | null;
+    insider_buys_90d: number;
+    insider_net_value_90d: number | null;
+    news_catalyst_7d: boolean;
+    news_offering_7d: boolean;
+};
+
+type Technicals = {
+    rvol: number | null;
+    atr_pct: number | null;
+    range_expansion: number | null;
+    dist_52w_high: number | null;
+    up_streak: number | null;
+    gap_open: number | null;
+    sector_heat: number | null;
+    sector_mention_z: number | null;
+};
+
+type InsiderTradeRow = {
+    filed_at: string;
+    transacted_at: string | null;
+    owner_name: string | null;
+    is_officer: boolean;
+    is_director: boolean;
+    code: 'P' | 'S';
+    shares: number | null;
+    price: number | null;
+    value: number | null;
 };
 
 type Props = {
@@ -100,6 +129,8 @@ type Props = {
     profile: Profile;
     financials: Financial[];
     intel: Intel;
+    technicals: Technicals;
+    insiders: InsiderTradeRow[];
     series: SeriesPoint[];
     bars: OhlcBar[];
     posts: TickerPost[];
@@ -126,6 +157,7 @@ type Props = {
         article_url: string;
         image_url: string | null;
         published_at: string;
+        catalyst_type: string | null;
     }[];
 };
 
@@ -206,6 +238,8 @@ export default function TickerShow({
     profile,
     financials,
     intel,
+    technicals,
+    insiders,
     series,
     bars,
     posts,
@@ -473,6 +507,220 @@ export default function TickerShow({
                     </Card>
                 </div>
 
+                {/* ── Tape, sector & insider flow (model features, phase D) ── */}
+                <div className="grid gap-4 xl:grid-cols-3">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-sm">
+                                Tape & technicals
+                                <InfoTip>
+                                    Computed from this ticker's own daily bars, exactly as the signal model sees them.
+                                    The tape either confirms the buzz or exposes it.
+                                </InfoTip>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex flex-col text-sm">
+                            <IntelRow
+                                label="Relative volume"
+                                tip="Latest session volume vs the trailing 20-session average. RVOL 1 = business as usual; 5+ = something is happening — the single metric momentum traders check first."
+                            >
+                                <span
+                                    className={`font-mono ${(technicals.rvol ?? 0) >= 3 ? 'text-emerald-400' : ''}`}
+                                >
+                                    {technicals.rvol !== null ? `${technicals.rvol.toFixed(1)}x` : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="ATR (14d)"
+                                tip="Average true range as a % of price — this stock's normal daily swing. Penny movers often run 8-15%; it also sizes how far a stop needs to sit."
+                            >
+                                <span className="font-mono">
+                                    {technicals.atr_pct !== null ? `${(technicals.atr_pct * 100).toFixed(1)}%` : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Range expansion"
+                                tip="Latest session's true range vs its own 14-day ATR. Above ~2 the bar is unusually wide — breakout (or breakdown) behavior, not noise."
+                            >
+                                <span
+                                    className={`font-mono ${(technicals.range_expansion ?? 0) >= 2 ? 'text-amber-400' : ''}`}
+                                >
+                                    {technicals.range_expansion !== null
+                                        ? `${technicals.range_expansion.toFixed(1)}x`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="From 52w high"
+                                tip="Close vs the trailing-year high. Near 0% = breaking out to new highs (no bagholders overhead); −80% = a broken chart where every rally meets trapped sellers."
+                            >
+                                <span className="font-mono">
+                                    {technicals.dist_52w_high !== null
+                                        ? `${(technicals.dist_52w_high * 100).toFixed(0)}%`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Up-day streak"
+                                tip="Consecutive up-closes ending at the latest session. Multi-day persistence separates campaigns from one-day wonders."
+                            >
+                                <span
+                                    className={`font-mono ${(technicals.up_streak ?? 0) >= 3 ? 'text-emerald-400' : ''}`}
+                                >
+                                    {technicals.up_streak !== null ? `${technicals.up_streak}d` : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Gap open"
+                                tip="Latest open vs the prior close — overnight repricing (news, PR) that intraday flow then confirms or fades."
+                            >
+                                <span className="font-mono">
+                                    {technicals.gap_open !== null
+                                        ? `${technicals.gap_open > 0 ? '+' : ''}${(technicals.gap_open * 100).toFixed(1)}%`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-sm">
+                                Sector & macro regime
+                                <InfoTip>
+                                    Penny explosions cluster: when one name in a sector rips, peers follow within days
+                                    (sympathy plays). The macro rows say whether small-cap buzz can convert at all.
+                                </InfoTip>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex flex-col text-sm">
+                            <IntelRow
+                                label="Sector heat"
+                                tip="Share of same-industry peers (SIC group, socially-tracked universe) that gained 20%+ over the last 5 sessions — excluding this ticker. High heat = a sympathy rotation is underway."
+                            >
+                                <span
+                                    className={`font-mono ${(technicals.sector_heat ?? 0) >= 0.15 ? 'text-emerald-400' : ''}`}
+                                >
+                                    {technicals.sector_heat !== null
+                                        ? `${(technicals.sector_heat * 100).toFixed(0)}% peers hot`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Sector buzz"
+                                tip="Today's sector-wide mention count vs its trailing 30-day baseline (z-score). Social contagion usually shows up here before price does."
+                            >
+                                <span
+                                    className={`font-mono ${(technicals.sector_mention_z ?? 0) >= 1.5 ? 'text-amber-400' : ''}`}
+                                >
+                                    {technicals.sector_mention_z !== null
+                                        ? `${technicals.sector_mention_z.toFixed(1)}σ`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Small-cap appetite"
+                                tip="IWM minus SPY, 20-session returns. Positive = small caps leading the market (buzz converts into moves); negative = flight to quality (pumps die on the vine)."
+                            >
+                                <span
+                                    className={`font-mono ${(intel.smallcap_rel_20d ?? 0) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+                                >
+                                    {intel.smallcap_rel_20d !== null
+                                        ? `${intel.smallcap_rel_20d > 0 ? '+' : ''}${(intel.smallcap_rel_20d * 100).toFixed(1)}%`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="Biotech tape (XBI 5d)"
+                                tip="Biotech ETF return over 5 sessions — the speculative end of small caps. A rising XBI is the tide that floats low-float biotech and pharma runners."
+                            >
+                                <span className="font-mono">
+                                    {intel.xbi_ret_5d !== null
+                                        ? `${intel.xbi_ret_5d > 0 ? '+' : ''}${(intel.xbi_ret_5d * 100).toFixed(1)}%`
+                                        : '—'}
+                                </span>
+                            </IntelRow>
+                            <IntelRow
+                                label="News catalyst (7d)"
+                                tip="An LLM-classified positive catalyst headline (FDA, contract, merger, uplisting…) published within 7 days. Buzz + a real catalyst is a different trade than buzz alone."
+                            >
+                                {intel.news_catalyst_7d ? (
+                                    <Badge variant="outline" className="border-emerald-500/40 text-emerald-400">
+                                        yes
+                                    </Badge>
+                                ) : (
+                                    <span className="font-mono text-muted-foreground">no</span>
+                                )}
+                            </IntelRow>
+                            <IntelRow
+                                label="Offering news (7d)"
+                                tip="An offering / dilution / reverse-split headline within 7 days — fresh supply meeting the rally."
+                            >
+                                {intel.news_offering_7d ? (
+                                    <Badge variant="outline" className="border-red-500/40 text-red-400">
+                                        yes — dilution
+                                    </Badge>
+                                ) : (
+                                    <span className="font-mono text-muted-foreground">no</span>
+                                )}
+                            </IntelRow>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex items-center gap-1.5 text-sm">
+                                Insider activity
+                                <InfoTip>
+                                    Open-market Form 4 purchases and sales (SEC EDGAR). Insiders buying their own
+                                    sub-$5 stock with their own money is one of the strongest known signals; grants
+                                    and option exercises are excluded.
+                                </InfoTip>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-1.5 text-sm">
+                            {insiders.length === 0 ? (
+                                <p className="py-4 text-center text-sm text-muted-foreground">
+                                    No open-market insider transactions on record.
+                                </p>
+                            ) : (
+                                insiders.map((trade, i) => (
+                                    <div
+                                        key={i}
+                                        className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-2.5 py-1.5"
+                                    >
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5">
+                                                <Badge
+                                                    variant="outline"
+                                                    className={
+                                                        trade.code === 'P'
+                                                            ? 'border-emerald-500/40 text-emerald-400'
+                                                            : 'border-red-500/40 text-red-400'
+                                                    }
+                                                >
+                                                    {trade.code === 'P' ? 'BUY' : 'SELL'}
+                                                </Badge>
+                                                <span className="truncate text-xs">
+                                                    {trade.owner_name ?? 'Insider'}
+                                                    {trade.is_officer && ' · officer'}
+                                                    {trade.is_director && ' · director'}
+                                                </span>
+                                            </div>
+                                            <span className="text-[11px] text-muted-foreground">
+                                                filed {trade.filed_at}
+                                            </span>
+                                        </div>
+                                        <span className="font-mono text-xs whitespace-nowrap">
+                                            {trade.value !== null ? compactMoney(trade.value) : '—'}
+                                        </span>
+                                    </div>
+                                ))
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+
                 {/* ── Financials ─────────────────────────────────────────── */}
                 {financials.length > 0 && (
                     <Card>
@@ -731,6 +979,20 @@ export default function TickerShow({
                                         >
                                             <p className="text-sm leading-snug font-medium group-hover:underline">{item.title}</p>
                                             <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                                                {item.catalyst_type && item.catalyst_type !== 'none' && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={
+                                                            item.catalyst_type === 'offering' ||
+                                                            item.catalyst_type === 'short_report' ||
+                                                            item.catalyst_type === 'legal'
+                                                                ? 'border-red-500/40 text-[10px] text-red-400'
+                                                                : 'border-emerald-500/40 text-[10px] text-emerald-400'
+                                                        }
+                                                    >
+                                                        {item.catalyst_type.replace('_', ' ')}
+                                                    </Badge>
+                                                )}
                                                 <span>{item.publisher ?? 'wire'}</span>
                                                 <span>{relativeTime(item.published_at)}</span>
                                                 <ExternalLink className="ml-auto size-3" />

@@ -11,6 +11,8 @@ use App\Models\Ticker;
 use App\Models\TickerMetric;
 use App\Services\Features\LlmAggregates;
 use App\Services\Features\MarketIntelligence;
+use App\Services\Features\SectorHeat;
+use App\Services\Features\TechnicalFeatures;
 use App\Services\MarketData\YahooMarketData;
 use App\Services\Ml\ConfidenceTrainer;
 use Carbon\CarbonImmutable;
@@ -67,6 +69,7 @@ class SignalEngine
         $today = now()->toDateString();
         $intel = MarketIntelligence::load($candidates->keys()->all(), $today, $today);
         $llm = LlmAggregates::load($candidates->keys()->all(), $today, $today);
+        $sector = SectorHeat::loadForDay($candidates->keys()->all(), $today);
 
         $fired = collect();
 
@@ -101,7 +104,8 @@ class SignalEngine
 
             $intelFeatures = $intel->features($ticker->id, $today);
             $llmFeatures = $llm->features($ticker->id, $today);
-            $confidence = $this->confidence($model, $metric, $market, [...$intelFeatures, ...$llmFeatures]);
+            $sectorFeatures = $sector->features($ticker->id, $today);
+            $confidence = $this->confidence($model, $metric, $market, [...$intelFeatures, ...$llmFeatures, ...$sectorFeatures]);
 
             $signal = Signal::create([
                 'ticker_id' => $ticker->id,
@@ -115,6 +119,7 @@ class SignalEngine
                     'market_gate' => $market,
                     'intel' => $intelFeatures,
                     'llm' => $llmFeatures,
+                    'sector' => $sectorFeatures,
                     'inputs' => [
                         'bucket_start' => $metric->bucket_start->toIso8601String(),
                         'mention_count' => $metric->mention_count,
@@ -196,10 +201,12 @@ class SignalEngine
         $latest = $bars->first();
         $close = (float) $latest->close;
 
-        // Volume z-score vs the trailing bars (excluding the latest). With a
-        // short history (new listing) the volume test is skipped and only the
-        // price cap applies — price alone was still a 4.2x-lift gate.
-        $trailing = $bars->slice(1)->pluck('volume')->map(fn ($v) => (float) $v);
+        // Volume z-score vs the trailing 30 bars (excluding the latest) —
+        // same window as the Backtester even though latestBars now holds a
+        // year of history for the technical features. With a short history
+        // (new listing) the volume test is skipped and only the price cap
+        // applies — price alone was still a 4.2x-lift gate.
+        $trailing = $bars->slice(1)->take(30)->pluck('volume')->map(fn ($v) => (float) $v);
         $volumeZ = null;
 
         if ($trailing->count() >= 10) {
@@ -219,6 +226,19 @@ class SignalEngine
         $close3Ago = $bars->count() > 3 ? (float) $bars[3]->close : null;
         $preReturn3d = $close3Ago !== null && $close3Ago > 0 ? round(($close - $close3Ago) / $close3Ago, 4) : null;
 
+        // Technical features on the latest bar (same definitions as the
+        // Backtester via TechnicalFeatures — bars ascending, signal = last).
+        $ascending = $bars->reverse()->values()
+            ->map(fn ($b): array => [
+                'date' => $b->bucket_start->toDateString(),
+                'open' => (float) $b->open,
+                'high' => (float) $b->high,
+                'low' => (float) $b->low,
+                'close' => (float) $b->close,
+                'volume' => (float) $b->volume,
+            ])
+            ->all();
+
         return [
             'passes' => $passesPrice && $passesVolume,
             'close' => round($close, 4),
@@ -231,6 +251,7 @@ class SignalEngine
                 ! $passesVolume => 'volume_not_confirmed',
                 default => null,
             },
+            ...TechnicalFeatures::compute($ascending, count($ascending) - 1),
         ];
     }
 
@@ -257,18 +278,21 @@ class SignalEngine
             'mentions' => (int) $metric->mention_count,
             'pre_return_3d' => $market['pre_return_3d'],
             'dollar_volume' => $market['dollar_volume'],
+            // Technical features ride along inside $market (marketGate
+            // computes them from the same bars); extra keys are ignored.
+            ...$market,
             ...$intelFeatures,
         ]));
     }
 
-    /** @return Collection<int, MarketBar> newest first, latest + 30 trailing */
+    /** @return Collection<int, MarketBar> newest first; a year for the 52w-high technical */
     protected function latestBars(int $tickerId): Collection
     {
         return MarketBar::query()
             ->where('ticker_id', $tickerId)
             ->where('interval', '1d')
             ->orderByDesc('bucket_start')
-            ->limit(31)
+            ->limit(260)
             ->get();
     }
 

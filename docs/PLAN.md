@@ -424,6 +424,29 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   open / pre-market / after-hours / closed as a `MarketStatusBadge` on
   the ticker page, signal cockpit and blotter, so quotes and unrealized
   P&L are always read with session context.
+- ✅ **Phase D: market-structure features (2026-07-05)** — five new
+  feature blocks, wired end-to-end (Backtester → backtest_events →
+  ConfidenceTrainer/GBM → live SignalEngine → ticker-page UI):
+  (1) *Technicals* (`TechnicalFeatures`, from our own bars): rvol,
+  atr_pct, range_expansion, dist_52w_high, up_streak, gap_open;
+  (2) *Sector sympathy* (`SectorHeat`, SIC major group from
+  EDGAR/Polygon): sector_heat (share of peers +20%/5d) and
+  sector_mention_z (sector-wide social contagion) — bulk path for
+  backtests, `loadForDay` for live; (3) *Macro regime*: smallcap_rel_20d
+  (IWM−SPY 20-session spread) + xbi_ret_5d (SPY/XBI added to
+  macro_symbols, Yahoo); (4) *Insider flow*: Form 4 open-market P/S
+  transactions (`insider_trades` table, `pennyhunt:sync-insider-trades`
+  daily 05:45, EDGAR XML parsing in EdgarClient) → insider_buys_90d +
+  signed-log insider_net_value_90d, point-in-time by FILED date;
+  (5) *News catalysts*: LLM headline classification
+  (`NewsCatalystClassifier`, 12 types, 25/call batches; hourly
+  `ClassifyNewsCatalysts` + `pennyhunt:backfill-news` for history) →
+  news_catalyst_7d / news_offering_7d. GBM feature count 23 → 37.
+  Ticker page gained three cards: Tape & technicals, Sector & macro
+  regime, Insider activity, plus catalyst badges on news. Run-34 GBM
+  model activated (replacing the pre-cleanup run-32 model). Tests: 169
+  passing (technicals 6, sector heat 2, catalysts 2, insider/news
+  features 2).
 - ✅ **Voices leaderboard (2026-07-05)** — weekly-updating ranked board of
   reddit authors who are consistently early on stocks that explode.
   A *call* = an author's first non-bearish reddit post mentioning a ticker

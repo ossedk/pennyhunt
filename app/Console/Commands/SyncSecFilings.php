@@ -72,7 +72,15 @@ class SyncSecFilings extends Command
     {
         $now = now();
 
-        $filings = collect($edgar->filings((int) $ticker->cik))
+        $submissions = $edgar->submissions((int) $ticker->cik);
+
+        // SIC industry code rides along free — the sector bucket for the
+        // sympathy-play (sector heat) features.
+        if ($submissions['sic'] !== null && $ticker->sic_code !== $submissions['sic']) {
+            $ticker->forceFill(['sic_code' => $submissions['sic']])->save();
+        }
+
+        $filings = collect($submissions['filings'])
             ->filter(fn (array $f): bool => in_array($f['form'], self::FORMS, true))
             ->map(fn (array $f): array => [
                 'ticker_id' => $ticker->id,

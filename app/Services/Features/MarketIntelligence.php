@@ -64,12 +64,24 @@ class MarketIntelligence
     /** @var array<int, float> closes aligned with btcDates */
     protected array $btcCloses = [];
 
+    /** @var array<string, array{dates: array<int, string>, closes: array<int, float>}> extra macro series (spy, xbi) */
+    protected array $macroSeries = [];
+
     /** @var array<int, array<string, int>> [tickerId => [date => mention count]] */
     protected array $tickerMentions = [];
+
+    /** @var array<int, array<int, array{date: string, buy: float, sell: float, buys: int}>> [tickerId => filed_at-sorted insider aggregates] */
+    protected array $insiderTrades = [];
+
+    /** @var array<int, array<int, array{date: string, offering: bool}>> [tickerId => published-sorted catalyst articles] */
+    protected array $newsCatalysts = [];
 
     public const FEATURE_KEYS = [
         'short_ratio', 'atm_filed_90d', 'active_shelf', 'share_growth_12m', 'market_ret_5d', 'site_mention_z',
         'vix', 'btc_ret_5d', 'mention_streak',
+        'smallcap_rel_20d', 'xbi_ret_5d',
+        'insider_buys_90d', 'insider_net_value_90d',
+        'news_catalyst_7d', 'news_offering_7d',
     ];
 
     /**
@@ -84,6 +96,8 @@ class MarketIntelligence
             $self->loadFilings($tickerIds);
             $self->loadShareCounts($tickerIds);
             $self->loadTickerMentions($tickerIds, $from, $to);
+            $self->loadInsiderTrades($tickerIds, $from, $to);
+            $self->loadNewsCatalysts($tickerIds, $from, $to);
         }
 
         $self->loadBenchmark($from, $to);
@@ -94,7 +108,7 @@ class MarketIntelligence
     }
 
     /**
-     * @return array{short_ratio: ?float, atm_filed_90d: bool, active_shelf: bool, share_growth_12m: ?float, market_ret_5d: ?float, site_mention_z: ?float, vix: ?float, btc_ret_5d: ?float, mention_streak: int}
+     * @return array<string, mixed> keyed by FEATURE_KEYS
      */
     public function features(int $tickerId, string $day): array
     {
@@ -108,7 +122,148 @@ class MarketIntelligence
             'vix' => $this->vixLevel($day),
             'btc_ret_5d' => $this->btcReturn5d($day),
             'mention_streak' => $this->mentionStreak($tickerId, $day),
+            'smallcap_rel_20d' => $this->smallcapRelative20d($day),
+            'xbi_ret_5d' => $this->seriesReturn('xbi', $day, 5),
+            ...$this->insiderFeatures($tickerId, $day),
+            ...$this->newsFeatures($tickerId, $day),
         ];
+    }
+
+    /**
+     * Small-cap risk appetite: IWM 20-session return minus SPY 20-session
+     * return. Positive = small caps leading (buzz converts), negative =
+     * flight to quality (pumps die on the vine).
+     */
+    protected function smallcapRelative20d(string $day): ?float
+    {
+        $iwm = $this->benchmarkReturn($day, 20);
+        $spy = $this->seriesReturn('spy', $day, 20);
+
+        return $iwm !== null && $spy !== null ? round($iwm - $spy, 4) : null;
+    }
+
+    /**
+     * Insider flow as-of $day (point-in-time by FILED date — the market
+     * can only see a Form 4 once it's filed):
+     *  - insider_buys_90d: open-market purchase transactions in 90 days
+     *  - insider_net_value_90d: signed log10 of net dollar flow
+     *    (+5 = $100k net buying, -6 = $1M net selling)
+     *
+     * @return array{insider_buys_90d: int, insider_net_value_90d: ?float}
+     */
+    protected function insiderFeatures(int $tickerId, string $day): array
+    {
+        $rows = $this->insiderTrades[$tickerId] ?? [];
+
+        if ($rows === []) {
+            return ['insider_buys_90d' => 0, 'insider_net_value_90d' => null];
+        }
+
+        $cutoff = gmdate('Y-m-d', strtotime($day.' UTC') - 90 * 86400);
+        $buys = 0;
+        $net = 0.0;
+
+        foreach ($rows as $row) {
+            if ($row['date'] > $day) {
+                break; // sorted ascending — nothing later is visible
+            }
+
+            if ($row['date'] >= $cutoff) {
+                $buys += $row['buys'];
+                $net += $row['buy'] - $row['sell'];
+            }
+        }
+
+        return [
+            'insider_buys_90d' => $buys,
+            'insider_net_value_90d' => $net !== 0.0
+                ? round(($net > 0 ? 1 : -1) * log10(1 + abs($net)), 4)
+                : 0.0,
+        ];
+    }
+
+    /**
+     * News catalysts as-of $day (by published date):
+     *  - news_catalyst_7d: any positive-catalyst article within 7 days
+     *  - news_offering_7d: any offering/dilution article within 7 days
+     *
+     * @return array{news_catalyst_7d: bool, news_offering_7d: bool}
+     */
+    protected function newsFeatures(int $tickerId, string $day): array
+    {
+        $rows = $this->newsCatalysts[$tickerId] ?? [];
+        $cutoff = gmdate('Y-m-d', strtotime($day.' UTC') - 7 * 86400);
+        $catalyst = false;
+        $offering = false;
+
+        foreach ($rows as $row) {
+            if ($row['date'] > $day) {
+                break;
+            }
+
+            if ($row['date'] >= $cutoff) {
+                if ($row['offering']) {
+                    $offering = true;
+                } else {
+                    $catalyst = true;
+                }
+            }
+        }
+
+        return ['news_catalyst_7d' => $catalyst, 'news_offering_7d' => $offering];
+    }
+
+    /** N-session return of an extra macro series (spy, xbi) as-of $day. */
+    protected function seriesReturn(string $key, string $day, int $sessions): ?float
+    {
+        $series = $this->macroSeries[$key] ?? null;
+
+        if ($series === null || count($series['dates']) < $sessions + 1) {
+            return null;
+        }
+
+        $idx = self::lastIndexAtOrBefore($series['dates'], $day);
+
+        if ($idx < $sessions || $series['closes'][$idx - $sessions] <= 0) {
+            return null;
+        }
+
+        return round($series['closes'][$idx] / $series['closes'][$idx - $sessions] - 1, 4);
+    }
+
+    /** N-session benchmark (IWM) return as-of $day. */
+    protected function benchmarkReturn(string $day, int $sessions): ?float
+    {
+        if (count($this->benchmarkDates) < $sessions + 1) {
+            return null;
+        }
+
+        $idx = self::lastIndexAtOrBefore($this->benchmarkDates, $day);
+
+        if ($idx < $sessions || $this->benchmarkCloses[$idx - $sessions] <= 0) {
+            return null;
+        }
+
+        return round($this->benchmarkCloses[$idx] / $this->benchmarkCloses[$idx - $sessions] - 1, 4);
+    }
+
+    /** @param array<int, string> $dates sorted ascending */
+    protected static function lastIndexAtOrBefore(array $dates, string $day): int
+    {
+        $idx = -1;
+
+        for ($lo = 0, $hi = count($dates) - 1; $lo <= $hi;) {
+            $mid = intdiv($lo + $hi, 2);
+
+            if ($dates[$mid] <= $day) {
+                $idx = $mid;
+                $lo = $mid + 1;
+            } else {
+                $hi = $mid - 1;
+            }
+        }
+
+        return $idx;
     }
 
     /** VIX close on the last session at/before $day (max 6 days stale). */
@@ -241,33 +396,7 @@ class MarketIntelligence
 
     protected function marketReturn5d(string $day): ?float
     {
-        $n = count($this->benchmarkDates);
-
-        if ($n < 6) {
-            return null;
-        }
-
-        // Last benchmark bar at/before $day (binary search).
-        $lo = 0;
-        $hi = $n - 1;
-        $idx = -1;
-
-        while ($lo <= $hi) {
-            $mid = intdiv($lo + $hi, 2);
-
-            if ($this->benchmarkDates[$mid] <= $day) {
-                $idx = $mid;
-                $lo = $mid + 1;
-            } else {
-                $hi = $mid - 1;
-            }
-        }
-
-        if ($idx < 5 || $this->benchmarkCloses[$idx - 5] <= 0) {
-            return null;
-        }
-
-        return round($this->benchmarkCloses[$idx] / $this->benchmarkCloses[$idx - 5] - 1, 4);
+        return $this->benchmarkReturn($day, 5);
     }
 
     protected function siteMentionZ(string $day): ?float
@@ -359,7 +488,9 @@ class MarketIntelligence
         DB::table('market_bars')
             ->where('ticker_id', $benchmarkId)
             ->where('interval', '1d')
-            ->where('bucket_start', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 20 * 86400))
+            // 45 calendar days ≈ 30 sessions of padding — enough for the
+            // 20-session small-cap relative-strength window.
+            ->where('bucket_start', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 45 * 86400))
             ->where('bucket_start', '<=', $to.' 23:59:59')
             ->orderBy('bucket_start')
             ->select('bucket_start', 'close')
@@ -377,7 +508,7 @@ class MarketIntelligence
             ->whereIn('symbol', array_values($symbols))
             ->pluck('id', 'symbol');
 
-        $fromPadded = gmdate('Y-m-d', strtotime($from.' UTC') - 20 * 86400);
+        $fromPadded = gmdate('Y-m-d', strtotime($from.' UTC') - 45 * 86400);
 
         if (isset($symbols['vix'], $ids[$symbols['vix']])) {
             DB::table('market_bars')
@@ -405,6 +536,70 @@ class MarketIntelligence
                     $this->btcCloses[] = (float) $bar->close;
                 });
         }
+
+        // Extra macro series with generic date/close arrays (spy, xbi).
+        foreach (['spy', 'xbi'] as $key) {
+            if (! isset($symbols[$key], $ids[$symbols[$key]])) {
+                continue;
+            }
+
+            $this->macroSeries[$key] = ['dates' => [], 'closes' => []];
+
+            DB::table('market_bars')
+                ->where('ticker_id', $ids[$symbols[$key]])
+                ->where('interval', '1d')
+                ->where('bucket_start', '>=', $fromPadded)
+                ->where('bucket_start', '<=', $to.' 23:59:59')
+                ->orderBy('bucket_start')
+                ->select('bucket_start', 'close')
+                ->each(function ($bar) use ($key): void {
+                    $this->macroSeries[$key]['dates'][] = substr((string) $bar->bucket_start, 0, 10);
+                    $this->macroSeries[$key]['closes'][] = (float) $bar->close;
+                });
+        }
+    }
+
+    /** @param array<int, int> $tickerIds */
+    protected function loadInsiderTrades(array $tickerIds, string $from, string $to): void
+    {
+        // Aggregate per (ticker, filed date) — features only need daily sums.
+        DB::table('insider_trades')
+            ->whereIn('ticker_id', $tickerIds)
+            ->where('filed_at', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 95 * 86400))
+            ->where('filed_at', '<=', $to)
+            ->selectRaw("ticker_id, filed_at,
+                SUM(CASE WHEN code = 'P' THEN COALESCE(value, 0) ELSE 0 END) AS buy_value,
+                SUM(CASE WHEN code = 'S' THEN COALESCE(value, 0) ELSE 0 END) AS sell_value,
+                SUM(CASE WHEN code = 'P' THEN 1 ELSE 0 END) AS buys")
+            ->groupBy('ticker_id', 'filed_at')
+            ->orderBy('filed_at')
+            ->each(function ($row): void {
+                $this->insiderTrades[(int) $row->ticker_id][] = [
+                    'date' => substr((string) $row->filed_at, 0, 10),
+                    'buy' => (float) $row->buy_value,
+                    'sell' => (float) $row->sell_value,
+                    'buys' => (int) $row->buys,
+                ];
+            });
+    }
+
+    /** @param array<int, int> $tickerIds */
+    protected function loadNewsCatalysts(array $tickerIds, string $from, string $to): void
+    {
+        DB::table('ticker_news')
+            ->whereIn('ticker_id', $tickerIds)
+            ->whereNotNull('catalyst_type')
+            ->whereNotIn('catalyst_type', ['none', 'other'])
+            ->where('published_at', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 10 * 86400))
+            ->where('published_at', '<=', $to.' 23:59:59')
+            ->select('ticker_id', 'published_at', 'catalyst_type')
+            ->orderBy('published_at')
+            ->each(function ($row): void {
+                $this->newsCatalysts[(int) $row->ticker_id][] = [
+                    'date' => substr((string) $row->published_at, 0, 10),
+                    'offering' => $row->catalyst_type === 'offering',
+                ];
+            });
     }
 
     /** @param array<int, int> $tickerIds */

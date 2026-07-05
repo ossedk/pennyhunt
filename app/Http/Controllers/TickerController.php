@@ -7,12 +7,15 @@ use App\Jobs\Ingestion\SyncCompanyProfile;
 use App\Jobs\Ingestion\SyncTickerNews;
 use App\Models\AggregatorSnapshot;
 use App\Models\AuthorLeaderboard;
+use App\Models\InsiderTrade;
 use App\Models\MarketBar;
 use App\Models\RawPost;
 use App\Models\Ticker;
 use App\Models\TickerMetric;
 use App\Models\TickerNews;
 use App\Services\Features\MarketIntelligence;
+use App\Services\Features\SectorHeat;
+use App\Services\Features\TechnicalFeatures;
 use App\Services\MarketData\MarketClock;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -119,6 +122,33 @@ class TickerController extends Controller
         $intel = MarketIntelligence::load([$ticker->id], now()->subDays(30)->toDateString(), now()->toDateString())
             ->features($ticker->id, now()->toDateString());
 
+        // Technicals from the loaded bars + sector heat (same feature code
+        // the model consumes — the page shows what the model sees).
+        $barArrays = $bars->all();
+        $technicals = $barArrays !== []
+            ? TechnicalFeatures::compute($barArrays, count($barArrays) - 1)
+            : array_fill_keys(TechnicalFeatures::FEATURE_KEYS, null);
+
+        $sector = SectorHeat::loadForDay([$ticker->id], now()->toDateString())
+            ->features($ticker->id, now()->toDateString());
+
+        $insiders = InsiderTrade::query()
+            ->where('ticker_id', $ticker->id)
+            ->orderByDesc('filed_at')
+            ->limit(10)
+            ->get()
+            ->map(fn (InsiderTrade $t): array => [
+                'filed_at' => $t->filed_at->toDateString(),
+                'transacted_at' => $t->transacted_at?->toDateString(),
+                'owner_name' => $t->owner_name,
+                'is_officer' => $t->is_officer,
+                'is_director' => $t->is_director,
+                'code' => $t->code,
+                'shares' => $t->shares,
+                'price' => $t->price,
+                'value' => $t->value,
+            ]);
+
         $financials = $ticker->financials()
             ->where('timeframe', 'quarterly')
             ->orderByDesc('end_date')
@@ -145,6 +175,8 @@ class TickerController extends Controller
             ]),
             'financials' => $financials,
             'intel' => $intel,
+            'technicals' => [...$technicals, ...$sector],
+            'insiders' => $insiders,
             'series' => $series,
             'bars' => $bars,
             'posts' => $posts,
@@ -164,6 +196,7 @@ class TickerController extends Controller
                     'article_url' => $n->article_url,
                     'image_url' => $n->image_url,
                     'published_at' => $n->published_at->toIso8601String(),
+                    'catalyst_type' => $n->catalyst_type,
                 ]),
         ]);
     }
