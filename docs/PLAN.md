@@ -436,10 +436,16 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   mentions it rejects — cashtags survive on Reddit, off-topic tweets
   still lose everything; (3) ticker page: tweets require a cashtag
   mention, buzz posts exclude `llm_off_topic`; (4)
-  `pennyhunt:reextract-mentions` re-judged history (prod purge run
-  2026-07-05) and rebuilt 60d of `ticker_metrics`, so mention counts,
-  z-scores and GBM training data all cleaned up. Tests: extractor (8),
-  classifier pruning (7).
+  `pennyhunt:reextract-mentions` re-judged history (prod purge runs
+  2026-07-05: 43.6k + 3.5k mentions deleted, ~13% of all rows) and
+  rebuilt 60d of `ticker_metrics`, so mention counts, z-scores and GBM
+  training data all cleaned up. Follow-up passes: censored profanity is
+  not a cashtag ("crock of $hit", "bull$hit", "STUPID $HIT IS THIS" with
+  determiner/adjective preceders), and cue rescue is position-aware
+  (noun after: "HIT shares"; trading verb before: "bought more HIT" —
+  "Earnings HIT different" no longer rescues). HIT page went from
+  profanity/`$NOW` tweets to genuine Health-In-Tech posts only. Tests:
+  extractor (10), classifier pruning (7).
 - ✅ **The Desk + global search + news + on-demand X (2026-07-05)** — new
   landing dashboard (`/dashboard`, also `/`): LLM-written market brief
   (`MarketBriefWriter`, closed-world context from our own aggregates,
