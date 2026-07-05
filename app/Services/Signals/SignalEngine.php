@@ -3,6 +3,7 @@
 namespace App\Services\Signals;
 
 use App\Events\SignalFired;
+use App\Jobs\Nlp\GenerateSignalBrief;
 use App\Models\AggregatorSnapshot;
 use App\Models\MarketBar;
 use App\Models\Signal;
@@ -133,6 +134,7 @@ class SignalEngine
             ]);
 
             SignalFired::dispatch($signal);
+            GenerateSignalBrief::dispatch($signal->id);
             $fired->push($signal);
         }
 

@@ -24,6 +24,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('voices', [VoicesController::class, 'index'])->name('voices');
     Route::get('signals', [SignalsController::class, 'index'])->name('signals');
     Route::get('signals/{signal}/bars', [SignalsController::class, 'bars'])->name('signals.bars');
+    Route::get('signals/{signal}/swarm', [SignalsController::class, 'swarm'])->name('signals.swarm');
     Route::get('signals/{signal}', [SignalsController::class, 'show'])->name('signals.show');
     Route::get('tickers/{symbol}', [TickerController::class, 'show'])->name('tickers.show');
 

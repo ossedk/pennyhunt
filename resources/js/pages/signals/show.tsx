@@ -1,6 +1,8 @@
 import { Head, Link } from '@inertiajs/react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { HypeSwarm } from '@/components/pennyhunt/hype-swarm';
+import { swarm as signalSwarm } from '@/routes/signals';
 import { MarketStatusBadge, relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
 import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { CandleChart    } from '@/components/pennyhunt/candle-chart';
@@ -65,6 +67,12 @@ type SignalDetail = {
     forward_return_1d: number | null;
     forward_return_3d: number | null;
     forward_return_5d: number | null;
+    llm_brief: {
+        summary: string;
+        watch_for: string[];
+        invalidation: string;
+        risk: string;
+    } | null;
 };
 
 type ProfileSide = Record<string, number>;
@@ -205,6 +213,8 @@ export default function SignalCockpit({
                     />
                 </div>
 
+                {signal.llm_brief && <SignalBriefCard brief={signal.llm_brief} />}
+
                 <div className="grid gap-4 xl:grid-cols-3">
                     {/* ── Left 2/3: plan, chart, checklist, analogs ─────── */}
                     <div className="flex flex-col gap-4 xl:col-span-2">
@@ -218,6 +228,23 @@ export default function SignalCockpit({
                             </CardHeader>
                             <CardContent>
                                 <CockpitChart signalId={signal.id} trade={trade} firedAt={signal.fired_at} />
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-1.5 text-sm">
+                                    Crowd momentum
+                                    <InfoTip>
+                                        Every particle is crowd attention; color is sentiment, labeled comets are
+                                        identifiable loud authors (amber = ranked Voices). The core grows with the
+                                        mention z-score — when it crosses the dashed ring the crowd hit critical
+                                        mass. The playback runs from 48h before the fire, so you watch the momentum
+                                        build; live signals refresh hourly.
+                                    </InfoTip>
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <HypeSwarm url={signalSwarm(signal.id).url} height={400} />
                             </CardContent>
                         </Card>
                         <DecisionChecklist signal={signal} winnerProfile={winnerProfile} />
@@ -234,6 +261,49 @@ export default function SignalCockpit({
                 </div>
             </div>
         </>
+    );
+}
+
+/** LLM "what to look for" note — generated at fire time from the exact features the model scored. */
+function SignalBriefCard({ brief }: { brief: NonNullable<SignalDetail['llm_brief']> }) {
+    return (
+        <Card className="border-emerald-500/20">
+            <CardHeader>
+                <CardTitle className="flex items-center gap-1.5 text-sm">
+                    <Sparkles className="size-4 text-emerald-400" />
+                    What to look for
+                    <InfoTip>
+                        LLM-written from the signal's own feature breakdown, the trade discipline, and recent
+                        posts/headlines — it can only reference facts the model actually saw.
+                    </InfoTip>
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+                <p className="text-sm leading-relaxed">{brief.summary}</p>
+                {brief.watch_for.length > 0 && (
+                    <div className="grid gap-1.5 sm:grid-cols-2">
+                        {brief.watch_for.map((item, i) => (
+                            <div key={i} className="flex items-start gap-2 rounded-md border border-border/60 px-2.5 py-1.5 text-xs">
+                                <span className="mt-0.5 inline-block size-1.5 shrink-0 rounded-full bg-emerald-400" />
+                                {item}
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    {brief.invalidation && (
+                        <p>
+                            <span className="font-medium text-rose-400">Invalidation:</span> {brief.invalidation}
+                        </p>
+                    )}
+                    {brief.risk && (
+                        <p>
+                            <span className="font-medium text-amber-400">Biggest risk:</span> {brief.risk}
+                        </p>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
     );
 }
 

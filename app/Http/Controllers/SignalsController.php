@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\Nlp\GenerateSignalBrief;
 use App\Models\AlertEvent;
+use App\Models\AuthorLeaderboard;
 use App\Models\BacktestEvent;
 use App\Models\BacktestRun;
 use App\Models\MarketBar;
@@ -159,6 +161,12 @@ class SignalsController extends Controller
                 ]),
             ]);
 
+        // "What to look for" note: generate lazily for signals that predate
+        // the brief feature (or whose generation failed on fire).
+        if ($signal->llm_brief === null) {
+            GenerateSignalBrief::dispatch($signal->id);
+        }
+
         return Inertia::render('signals/show', [
             'signal' => [
                 'id' => $signal->id,
@@ -174,6 +182,7 @@ class SignalsController extends Controller
                 'forward_return_1d' => $signal->forward_return_1d,
                 'forward_return_3d' => $signal->forward_return_3d,
                 'forward_return_5d' => $signal->forward_return_5d,
+                'llm_brief' => $signal->llm_brief,
             ],
             'trade' => $trade !== null ? $this->tradePayload($trade->load('ticker'), withHoldingDay: true) : null,
             'tradeTier' => $model?->metrics['trade_tier'] ?? null,
@@ -227,6 +236,77 @@ class SignalsController extends Controller
             'entry' => $entry,
             'stop_level' => $entry !== null ? round($entry * 0.9, 4) : null,
             'time_exit_date' => $entryIdx !== null ? ($bars[$entryIdx + 5]['date'] ?? null) : null,
+        ]);
+    }
+
+    /**
+     * Hourly swarm data for the crowd-momentum animation: mention/author/
+     * sentiment buckets from 48h before the fire through now (capped at
+     * fire+5d), plus "named" particles — the loudest identifiable authors
+     * (voice-ranked and high-karma) with their hour and sentiment. The page
+     * polls this every few minutes; new hours animate in.
+     */
+    public function swarm(Signal $signal): JsonResponse
+    {
+        $start = $signal->fired_at->copy()->subHours(48);
+        $end = min(now(), $signal->fired_at->copy()->addDays(5));
+
+        $hours = TickerMetric::query()
+            ->where('ticker_id', $signal->ticker_id)
+            ->where('interval', '1h')
+            ->where('bucket_start', '>=', $start)
+            ->where('bucket_start', '<=', $end)
+            ->orderBy('bucket_start')
+            ->get(['bucket_start', 'mention_count', 'unique_authors', 'weighted_sentiment', 'zscore_mentions'])
+            ->map(fn (TickerMetric $m): array => [
+                'hour' => $m->bucket_start->toIso8601String(),
+                'mentions' => $m->mention_count,
+                'authors' => $m->unique_authors,
+                'sentiment' => $m->weighted_sentiment !== null ? (float) $m->weighted_sentiment : null,
+                'zscore' => $m->zscore_mentions !== null ? (float) $m->zscore_mentions : null,
+            ]);
+
+        $week = AuthorLeaderboard::currentWeek();
+        $voiceRanks = $week === null ? [] : AuthorLeaderboard::query()
+            ->where('week_start', $week)
+            ->pluck('rank', 'author_id')
+            ->all();
+
+        $posts = RawPost::query()
+            ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $signal->ticker_id))
+            ->whereBetween('posted_at', [$start, $end])
+            ->whereDoesntHave('sentiment', fn ($q) => $q->where('llm_off_topic', true))
+            ->whereNotNull('author_id')
+            ->with([
+                'author:id,username,karma',
+                'sentiment:id,raw_post_id,lexicon_score,llm_direction,llm_post_type',
+            ])
+            ->orderByDesc('score')
+            ->limit(150)
+            ->get()
+            ->map(fn (RawPost $p): array => [
+                'hour' => $p->posted_at->copy()->startOfHour()->toIso8601String(),
+                'username' => $p->author?->username,
+                'karma' => $p->author?->karma,
+                'voice_rank' => $voiceRanks[$p->author_id] ?? null,
+                'score' => $p->score,
+                'sentiment' => $p->sentiment?->llm_direction
+                    ?? ($p->sentiment?->lexicon_score !== null
+                        ? ($p->sentiment->lexicon_score > 0.1 ? 'bullish' : ($p->sentiment->lexicon_score < -0.1 ? 'bearish' : 'neutral'))
+                        : 'neutral'),
+                'post_type' => $p->sentiment?->llm_post_type,
+            ]);
+
+        return response()->json([
+            'symbol' => $signal->ticker->symbol,
+            'fired_at' => $signal->fired_at->toIso8601String(),
+            'window' => ['start' => $start->toIso8601String(), 'end' => $end->toIso8601String()],
+            'live' => $end->diffInMinutes(now()) < 90,
+            // Display anchor: the mention z-score where the composite's
+            // acceleration component saturates — "critical mass".
+            'threshold_z' => 3.0,
+            'hours' => $hours,
+            'posts' => $posts,
         ]);
     }
 

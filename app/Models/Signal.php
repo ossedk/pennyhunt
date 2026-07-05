@@ -16,6 +16,8 @@ class Signal extends Model
             'fired_at' => 'datetime',
             'graded_at' => 'datetime',
             'breakdown' => 'array',
+            'llm_brief' => 'array',
+            'llm_brief_at' => 'datetime',
             'composite_score' => 'float',
             'confidence' => 'float',
             'forward_return_1d' => 'float',

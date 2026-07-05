@@ -167,6 +167,21 @@ return;
                 timeVisible: false,
                 rightOffset: 3,
             },
+            // Full trader interactions: wheel zoom, drag to pan, pinch on
+            // touch, drag the price/time axes to scale either dimension.
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: true,
+            },
+            handleScale: {
+                mouseWheel: true,
+                pinch: true,
+                axisPressedMouseMove: { time: true, price: true },
+                axisDoubleClickReset: { time: true, price: true },
+            },
+            kineticScroll: { mouse: true, touch: true },
         });
 
         const candles = chart.addSeries(CandlestickSeries, {
@@ -335,22 +350,38 @@ return;
                         Vol <span className="text-foreground">{fmtVolume(shown.volume)}</span>
                     </span>
                 </div>
-                <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
-                    {RANGES.map((r) => (
+                <div className="flex items-center gap-2">
+                    <span className="hidden text-[10px] text-muted-foreground lg:inline">
+                        scroll to zoom · drag to pan · double-click axis to reset
+                    </span>
+                    <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
+                        {RANGES.map((r) => (
+                            <button
+                                key={r.key}
+                                type="button"
+                                onClick={() => setRange(r.key)}
+                                className={cn(
+                                    'rounded px-2 py-0.5 font-mono text-xs transition-colors',
+                                    range === r.key
+                                        ? 'bg-secondary text-foreground'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                            >
+                                {r.key}
+                            </button>
+                        ))}
                         <button
-                            key={r.key}
                             type="button"
-                            onClick={() => setRange(r.key)}
-                            className={cn(
-                                'rounded px-2 py-0.5 font-mono text-xs transition-colors',
-                                range === r.key
-                                    ? 'bg-secondary text-foreground'
-                                    : 'text-muted-foreground hover:text-foreground',
-                            )}
+                            onClick={() => {
+                                chartRef.current?.timeScale().fitContent();
+                                candleRef.current?.priceScale().applyOptions({ autoScale: true });
+                            }}
+                            title="Reset zoom & pan"
+                            className="rounded px-2 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
                         >
-                            {r.key}
+                            ⟲
                         </button>
-                    ))}
+                    </div>
                 </div>
             </div>
             <div ref={containerRef} style={{ height }} />
