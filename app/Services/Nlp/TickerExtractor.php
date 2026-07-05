@@ -53,6 +53,18 @@ class TickerExtractor
     protected const DOLLAR_AS_S_WORDS = ['SHIT', 'SHITS', 'SLUT', 'SLUTS', 'SEX', 'SEXY', 'SUCK', 'SUCKS'];
 
     /**
+     * A determiner/possessive/adjective immediately before a profanity-shaped
+     * cashtag marks it as a censored noun ("STUPID $HIT", "your $hit list"),
+     * even in uppercase — nobody writes "this $HIT" about a stock they hold.
+     */
+    protected const PROFANITY_PRECEDERS = [
+        'this', 'that', 'the', 'these', 'those', 'your', 'my', 'his', 'her',
+        'their', 'our', 'its', 'some', 'no', 'any', 'of', 'what', 'stupid',
+        'dumb', 'crazy', 'holy', 'little', 'dog', 'bull', 'horse', 'ape',
+        'piece', 'talking', 'talk', 'full',
+    ];
+
+    /**
      * @param  string|null  $sourceType  'twitter' restricts to cashtags: tweets
      *                                   use $cashtags by convention, so bare
      *                                   uppercase words there are shouting, not tickers.
@@ -68,11 +80,15 @@ class TickerExtractor
 
         // Tier 1: cashtags — $ABCD (1-5 letters, optional .X suffix).
         // Lookbehind stops mid-word matches: "bull$hit" is not a $HIT tag.
-        preg_match_all('/(?<![\w$])\$([A-Za-z]{1,5})(?:\.[A-Za-z])?\b/', $text, $cashtagMatches);
-        foreach ($cashtagMatches[1] as $raw) {
+        preg_match_all('/(?<![\w$])\$([A-Za-z]{1,5})(?:\.[A-Za-z])?\b/', $text, $cashtagMatches, PREG_OFFSET_CAPTURE);
+        foreach ($cashtagMatches[1] as [$raw, $offset]) {
             $symbol = strtoupper($raw);
 
             if ($this->isDollarAsS($raw) || ! $this->isKnownSymbol($symbol)) {
+                continue;
+            }
+
+            if ($this->isCensoredProfanity($text, $offset, $raw)) {
                 continue;
             }
 
@@ -156,6 +172,25 @@ class TickerExtractor
         }
 
         return false;
+    }
+
+    /**
+     * Catches UPPERCASE censored profanity ("STUPID $HIT IS THIS"): the tag
+     * spells profanity with an S prefix AND the word right before it is a
+     * determiner/possessive/adjective. Applies only to the profanity list,
+     * so ordinary cashtags never trip it.
+     */
+    protected function isCensoredProfanity(string $text, int $offset, string $raw): bool
+    {
+        if (! in_array('S'.strtoupper($raw), self::DOLLAR_AS_S_WORDS, true)) {
+            return false;
+        }
+
+        preg_match_all('/[A-Za-z]+/', substr($text, max(0, $offset - 30), min($offset, 30)), $b);
+
+        $preceding = strtolower($b[0][count($b[0]) - 1] ?? '');
+
+        return in_array($preceding, self::PROFANITY_PRECEDERS, true);
     }
 
     /**

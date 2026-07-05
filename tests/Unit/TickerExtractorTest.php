@@ -115,8 +115,13 @@ class TickerExtractorTest extends TestCase
         // Mid-word "$" is never a cashtag boundary.
         $this->assertArrayNotHasKey('HIT', $extractor->extract('Exness scam reviews - I call bull$hit'));
 
+        // Uppercase profanity behind a determiner/adjective is still profanity.
+        $this->assertArrayNotHasKey('HIT', $extractor->extract('WHAT KIND OF STUPID $HIT IS THIS?'));
+        $this->assertArrayNotHasKey('HIT', $extractor->extract('get this $HIT out of my country!'));
+
         // Deliberate uppercase cashtag still counts.
         $this->assertArrayHasKey('HIT', $extractor->extract('Loading $HIT before earnings'));
+        $this->assertArrayHasKey('HIT', $extractor->extract('On the Rebound — $MIGI, $HIT, $LFMD Bouncing'));
     }
 
     public function test_cue_rescue_is_position_aware(): void
