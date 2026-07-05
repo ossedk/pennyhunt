@@ -104,4 +104,15 @@ class TickerExtractorTest extends TestCase
         $this->assertArrayHasKey('GME', $result);
         $this->assertArrayNotHasKey('ABCD', $result);
     }
+
+    public function test_censored_profanity_is_not_a_cashtag(): void
+    {
+        $extractor = app(TickerExtractor::class);
+
+        // "$hit" = censored "shit", not the HIT ticker.
+        $this->assertArrayNotHasKey('HIT', $extractor->extract('Rep. Crock of $hit!! We will disrespect you'));
+
+        // Deliberate uppercase cashtag still counts.
+        $this->assertArrayHasKey('HIT', $extractor->extract('Loading $HIT before earnings'));
+    }
 }

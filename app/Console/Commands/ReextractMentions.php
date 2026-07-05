@@ -116,11 +116,16 @@ class ReextractMentions extends Command
                 ->join('tickers as t', 't.id', '=', 'm.ticker_id')
                 ->join('raw_posts as p', 'p.id', '=', 'm.raw_post_id')
                 ->join('sources as s', 's.id', '=', 'p.source_id')
-                ->where('m.method', '<>', 'cashtag')
+                // Twitter mentions are re-judged wholesale (incl. cashtags —
+                // "$hit" profanity); elsewhere only bare-word matches on
+                // English-word / curated-ambiguous symbols are suspect.
                 ->where(fn ($q) => $q
-                    ->whereIn('t.symbol', $words)
-                    ->orWhereIn('t.symbol', config('pennyhunt.ambiguous_symbols'))
-                    ->orWhere('s.type', 'twitter'))
+                    ->where('s.type', 'twitter')
+                    ->orWhere(fn ($qq) => $qq
+                        ->where('m.method', '<>', 'cashtag')
+                        ->where(fn ($qqq) => $qqq
+                            ->whereIn('t.symbol', $words)
+                            ->orWhereIn('t.symbol', config('pennyhunt.ambiguous_symbols')))))
                 ->select('m.raw_post_id'),
             'suspects',
         )->distinct()->pluck('raw_post_id')->all();

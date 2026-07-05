@@ -37,6 +37,13 @@ class TickerExtractor
     ];
 
     /**
+     * Censored profanity where "$" stands in for "S" ("crock of $hit",
+     * "$lut", "$ex tape") — family-filtered wordlists omit these, so the
+     * dollar-as-S check needs them spelled out.
+     */
+    protected const DOLLAR_AS_S_WORDS = ['SHIT', 'SHITS', 'SLUT', 'SLUTS', 'SEX', 'SEXY', 'SUCK', 'SUCKS'];
+
+    /**
      * @param  string|null  $sourceType  'twitter' restricts to cashtags: tweets
      *                                   use $cashtags by convention, so bare
      *                                   uppercase words there are shouting, not tickers.
@@ -52,11 +59,14 @@ class TickerExtractor
 
         // Tier 1: cashtags — $ABCD (1-5 letters, optional .X suffix)
         preg_match_all('/\$([A-Za-z]{1,5})(?:\.[A-Za-z])?\b/', $text, $cashtagMatches);
-        foreach ($cashtagMatches[1] as $symbol) {
-            $symbol = strtoupper($symbol);
-            if ($this->isKnownSymbol($symbol)) {
-                $found[$symbol] = ['confidence' => 1.0, 'method' => 'cashtag'];
+        foreach ($cashtagMatches[1] as $raw) {
+            $symbol = strtoupper($raw);
+
+            if ($this->isDollarAsS($raw) || ! $this->isKnownSymbol($symbol)) {
+                continue;
             }
+
+            $found[$symbol] = ['confidence' => 1.0, 'method' => 'cashtag'];
         }
 
         if ($sourceType === 'twitter') {
@@ -134,6 +144,23 @@ class TickerExtractor
         }
 
         return false;
+    }
+
+    /**
+     * "$hit" is "shit", not a $HIT cashtag: when the tag is written fully
+     * lowercase and prefixing an S yields an English word, the dollar sign
+     * is censorship/stylization, not a ticker. Uppercase tags ($HIT) are
+     * unaffected — deliberate cashtags survive.
+     */
+    protected function isDollarAsS(string $raw): bool
+    {
+        if ($raw !== strtolower($raw)) {
+            return false;
+        }
+
+        $sWord = 'S'.strtoupper($raw);
+
+        return in_array($sWord, self::DOLLAR_AS_S_WORDS, true) || $this->isEnglishWord($sWord);
     }
 
     protected function isKnownSymbol(string $symbol): bool
