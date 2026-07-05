@@ -28,6 +28,8 @@ class BackfillTwitterHistory extends Command
     protected $signature = 'pennyhunt:backfill-twitter
         {--run= : Backtest run whose candidate days define the windows (default: latest done)}
         {--limit=300 : Tickers processed, ordered by candidate-event count}
+        {--max-price=5 : Only candidate days with entry at/below this (the tradeable universe)}
+        {--max-windows=12 : Skip tickers with more merged windows than this (perma-buzz megacaps)}
         {--batch=30 : Search terms per Apify actor run}
         {--per-term=20 : Item budget per search term}
         {--dry-run : Plan and price without calling Apify}';
@@ -56,9 +58,12 @@ class BackfillTwitterHistory extends Command
             return self::FAILURE;
         }
 
-        // Candidate days per ticker (buzz-defined — hit AND non-hit days).
+        // Candidate days per ticker (buzz-defined — hit AND non-hit days),
+        // restricted to the tradeable price band: X callers on NVDA/TSLA
+        // are noise for a penny-stock board and eat the item budget.
         $rows = DB::table('backtest_events')
             ->where('backtest_run_id', $runId)
+            ->where('entry', '<=', (float) $this->option('max-price'))
             ->orderBy('symbol')
             ->orderBy('day')
             ->get(['symbol', 'day'])
@@ -67,10 +72,20 @@ class BackfillTwitterHistory extends Command
             ->take((int) $this->option('limit'));
 
         $minLikes = (int) $config['min_likes'];
+        $maxWindows = (int) $this->option('max-windows');
         $terms = [];
+        $skipped = 0;
 
         foreach ($rows as $symbol => $days) {
-            foreach ($this->mergeWindows($days->pluck('day')->all()) as [$from, $to]) {
+            $windows = $this->mergeWindows($days->pluck('day')->unique()->sort()->values()->all());
+
+            if (count($windows) > $maxWindows) {
+                $skipped++;
+
+                continue;
+            }
+
+            foreach ($windows as [$from, $to]) {
                 $terms[] = sprintf(
                     '$%s min_faves:%d since:%s until:%s -filter:retweets',
                     $symbol,
@@ -79,6 +94,10 @@ class BackfillTwitterHistory extends Command
                     $to,
                 );
             }
+        }
+
+        if ($skipped > 0) {
+            $this->line("  ({$skipped} perma-buzz tickers skipped: > {$maxWindows} windows)");
         }
 
         $batchSize = max(1, (int) $this->option('batch'));
