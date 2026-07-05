@@ -6,6 +6,7 @@ use App\Models\BacktestEvent;
 use App\Models\BacktestRun;
 use App\Models\SignalModel;
 use App\Services\Ml\ConfidenceTrainer;
+use App\Support\Memory;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Process;
@@ -31,7 +32,7 @@ class TrainGbmModel extends Command
 
     public function handle(): int
     {
-        ini_set('memory_limit', '1024M'); // 32k-event export + artifact import
+        Memory::raise('1024M'); // 32k-event export + artifact import
 
         $run = $this->option('run')
             ? BacktestRun::findOrFail((int) $this->option('run'))

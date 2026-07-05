@@ -1,6 +1,6 @@
 # Pennyhunt — Production Deployment
 
-> Last updated: 2026-07-04
+> Last updated: 2026-07-05
 > Status: **LIVE** at https://pennyhunt.wecode.dev (Laravel Forge, Linode `139.162.134.88`)
 
 ## Overview
@@ -25,7 +25,7 @@ PostgreSQL 16 — so Postgres runs **in user space** from portable binaries.
 | Horizon (queues) | systemd user unit `pennyhunt-horizon` | Redis-backed, prefix `pennyhunt_horizon:` |
 | Reverb (websockets) | systemd user unit `pennyhunt-reverb` | `127.0.0.1:8080` |
 | Scheduler | forge crontab, `schedule:run` every minute | `crontab -l` as forge |
-| LLM backfill | transient systemd user unit `pennyhunt-classify-backfill` | `~/run-classify-backfill.sh` (loops until candidate set exhausted) |
+| LLM backfill | persistent systemd user unit `pennyhunt-classify-backfill` | `~/run-classify-backfill.sh` (loops until candidate set exhausted; deploy-safe — re-enters `current` each iteration, retries failed dry-runs instead of treating them as done) |
 | ML training venv | `uv`-managed Python 3.12 venv (scikit-learn, pandas, numpy) | `/home/forge/venvs/pennyhunt` — `PENNYHUNT_ML_PYTHON` points here |
 | Web | nginx (Forge-managed, TLS on 443) → php8.5-fpm | root `current/public` |
 
@@ -71,6 +71,24 @@ php artisan config:cache && php artisan route:cache && php artisan view:cache
 systemctl --user restart pennyhunt-horizon   # pick up new job code
 sudo service php8.5-fpm reload
 ```
+
+### PHP memory cap (max_memory_limit)
+
+PHP 8.5's system-level `max_memory_limit` is 512M in `/etc/php/8.5/cli/php.ini`
+(not editable without root). Backtests need up to 3G, so the cap is lifted in
+user space: `/home/forge/php-overrides/99-pennyhunt.ini` sets
+`max_memory_limit = 3G`, activated via `PHP_INI_SCAN_DIR=:/home/forge/php-overrides`
+(leading colon = keep the default conf.d scan). That env var is set in:
+
+- the `pennyhunt-horizon` and `pennyhunt-classify-backfill` systemd units
+  (`Environment=` line),
+- the forge crontab (top-of-file variable, inherited by `schedule:run`
+  children).
+
+Incident 2026-07-04: `RunBacktest` #33 died instantly — `ini_set('memory_limit',
+'3072M')` over the cap raises a WARNING that Laravel promotes to
+ErrorException. Code side is now guarded (`App\Support\Memory::raise()`
+suppresses the warning and accepts the clamp), server side lifted as above.
 
 ### Environment
 

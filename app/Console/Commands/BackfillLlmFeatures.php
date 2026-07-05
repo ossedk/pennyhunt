@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\BacktestRun;
 use App\Services\Features\LlmAggregates;
+use App\Support\Memory;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -24,7 +25,7 @@ class BackfillLlmFeatures extends Command
 
     public function handle(): int
     {
-        ini_set('memory_limit', '1024M'); // bulk aggregate load over 24 months
+        Memory::raise('1024M'); // bulk aggregate load over 24 months
 
         $run = $this->option('run')
             ? BacktestRun::findOrFail((int) $this->option('run'))

@@ -6,6 +6,7 @@ use App\Models\BacktestRun;
 use App\Services\Backtesting\Backtester;
 use App\Services\Backtesting\PortfolioSimulator;
 use App\Services\Ml\ConfidenceTrainer;
+use App\Support\Memory;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Throwable;
@@ -28,7 +29,7 @@ class RunBacktest implements ShouldQueue
         // A 12-month multi-thousand-ticker replay peaks near 300MB; the
         // 24-month window roughly doubles that. 3GB gives comfortable
         // headroom either way.
-        ini_set('memory_limit', '3072M');
+        Memory::raise('3072M');
 
         $run = BacktestRun::findOrFail($this->backtestRunId);
 
