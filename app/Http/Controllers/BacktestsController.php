@@ -7,6 +7,7 @@ use App\Models\BacktestEvent;
 use App\Models\BacktestRun;
 use App\Models\MarketBar;
 use App\Models\PostTickerMention;
+use App\Models\SignalModel;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -53,6 +54,25 @@ class BacktestsController extends Controller
                 'mention_count' => PostTickerMention::count(),
                 'tickers_with_bars' => MarketBar::distinct('ticker_id')->count('ticker_id'),
             ],
+            // Model registry: where the nightly shadow retrains land. Brier
+            // trend shows whether new features/data actually improve skill.
+            'models' => SignalModel::query()
+                ->orderByDesc('id')
+                ->limit(15)
+                ->get()
+                ->map(fn (SignalModel $m): array => [
+                    'id' => $m->id,
+                    'version' => $m->version,
+                    'backtest_run_id' => $m->backtest_run_id,
+                    'is_active' => $m->is_active,
+                    'train_events' => $m->train_events,
+                    'created_at' => $m->created_at->toIso8601String(),
+                    'brier' => $m->metrics['brier'] ?? null,
+                    'brier_reference' => $m->metrics['brier_reference'] ?? null,
+                    'base_rate' => $m->metrics['base_rate'] ?? null,
+                    'oos_events' => $m->metrics['oos_events'] ?? null,
+                    'trade_tier' => $m->metrics['trade_tier'] ?? null,
+                ]),
         ]);
     }
 

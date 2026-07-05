@@ -126,6 +126,20 @@ type Paginated<T> = {
     next_page_url: string | null;
 };
 
+type ModelRow = {
+    id: number;
+    version: string;
+    backtest_run_id: number | null;
+    is_active: boolean;
+    train_events: number | null;
+    created_at: string;
+    brier: number | null;
+    brier_reference: number | null;
+    base_rate: number | null;
+    oos_events: number | null;
+    trade_tier: { raw_p: number; calibrated_p: number } | null;
+};
+
 type Props = {
     runs: Run[];
     selectedRunId: number | null;
@@ -136,9 +150,10 @@ type Props = {
         mention_count: number;
         tickers_with_bars: number;
     };
+    models: ModelRow[];
 };
 
-export default function Backtests({ runs, selectedRunId, events, dataCoverage }: Props) {
+export default function Backtests({ runs, selectedRunId, events, dataCoverage, models }: Props) {
     const hasActive = runs.some((r) => r.status === 'pending' || r.status === 'running');
 
     useEffect(() => {
@@ -253,6 +268,8 @@ export default function Backtests({ runs, selectedRunId, events, dataCoverage }:
                     </CardContent>
                 </Card>
 
+                <ModelRegistry models={models} />
+
                 {selected?.status === 'failed' && (
                     <Card>
                         <CardContent className="py-4 text-sm text-red-400">{selected.error}</CardContent>
@@ -267,6 +284,91 @@ export default function Backtests({ runs, selectedRunId, events, dataCoverage }:
                 {selected && events && <SignalsTable events={events} />}
             </div>
         </>
+    );
+}
+
+/**
+ * Where the nightly shadow GBM retrains land. Lower Brier = better
+ * calibrated skill; "edge vs base" shows the improvement over always
+ * predicting the base rate.
+ */
+function ModelRegistry({ models }: { models: ModelRow[] }) {
+    if (models.length === 0) {
+        return null;
+    }
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="text-sm">Model registry — nightly GBM retrains</CardTitle>
+            </CardHeader>
+            <CardContent>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Version</TableHead>
+                            <TableHead>Trained on</TableHead>
+                            <TableHead className="text-right">Train events</TableHead>
+                            <TableHead className="text-right">OOS events</TableHead>
+                            <TableHead className="text-right">Brier ↓</TableHead>
+                            <TableHead className="text-right">Edge vs base</TableHead>
+                            <TableHead className="text-right">Trade tier p≥</TableHead>
+                            <TableHead>Status</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {models.map((m) => {
+                            const edge =
+                                m.brier !== null && m.brier_reference !== null
+                                    ? (1 - m.brier / m.brier_reference) * 100
+                                    : null;
+
+                            return (
+                                <TableRow key={m.id}>
+                                    <TableCell className="font-mono text-xs">{m.version}</TableCell>
+                                    <TableCell className="text-xs text-muted-foreground">
+                                        run #{m.backtest_run_id} · {m.created_at.slice(0, 10)}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-xs">
+                                        {m.train_events?.toLocaleString() ?? '—'}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-xs">
+                                        {m.oos_events?.toLocaleString() ?? '—'}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-xs">
+                                        {m.brier !== null ? m.brier.toFixed(5) : '—'}
+                                    </TableCell>
+                                    <TableCell
+                                        className={cn(
+                                            'text-right font-mono text-xs',
+                                            edge !== null && edge > 0
+                                                ? 'text-emerald-600 dark:text-emerald-400'
+                                                : 'text-muted-foreground',
+                                        )}
+                                    >
+                                        {edge !== null ? `+${edge.toFixed(1)}%` : '—'}
+                                    </TableCell>
+                                    <TableCell className="text-right font-mono text-xs">
+                                        {m.trade_tier ? m.trade_tier.raw_p.toFixed(2) : '—'}
+                                    </TableCell>
+                                    <TableCell>
+                                        {m.is_active ? (
+                                            <Badge className="bg-emerald-500/15 text-xs text-emerald-600 dark:text-emerald-400">
+                                                active
+                                            </Badge>
+                                        ) : (
+                                            <Badge variant="outline" className="text-xs text-muted-foreground">
+                                                shadow
+                                            </Badge>
+                                        )}
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}
+                    </TableBody>
+                </Table>
+            </CardContent>
+        </Card>
     );
 }
 
