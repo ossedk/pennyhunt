@@ -8,6 +8,7 @@ use App\Http\Controllers\SearchController;
 use App\Http\Controllers\SignalsController;
 use App\Http\Controllers\SourcesController;
 use App\Http\Controllers\TickerController;
+use App\Http\Controllers\VoicesController;
 use App\Http\Controllers\WatchlistController;
 use Illuminate\Support\Facades\Route;
 
@@ -20,6 +21,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('radar', [RadarController::class, 'index'])->name('radar');
 
     Route::get('feed', [FeedController::class, 'index'])->name('feed');
+    Route::get('voices', [VoicesController::class, 'index'])->name('voices');
     Route::get('signals', [SignalsController::class, 'index'])->name('signals');
     Route::get('signals/{signal}/bars', [SignalsController::class, 'bars'])->name('signals.bars');
     Route::get('signals/{signal}', [SignalsController::class, 'show'])->name('signals.show');

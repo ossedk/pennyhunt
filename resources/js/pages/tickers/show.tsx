@@ -43,6 +43,7 @@ type TickerPost = {
         llm_post_type: string | null;
         llm_pump_suspicion: number | null;
     } | null;
+    voice_rank: number | null;
 };
 
 type Tweet = TickerPost & { followers: number | null; retweets: number | null };
@@ -661,6 +662,14 @@ export default function TickerShow({
                                                 {post.source.name}
                                             </Badge>
                                             <span>{post.author?.username ?? '[deleted]'}</span>
+                                            {post.voice_rank !== null && (
+                                                <Badge
+                                                    className="bg-amber-500/15 text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                                                    title={`Ranked #${post.voice_rank} on the Voices leaderboard — proven track record of early calls on winners`}
+                                                >
+                                                    voice #{post.voice_rank}
+                                                </Badge>
+                                            )}
                                             <span>·</span>
                                             <span>{relativeTime(post.posted_at)}</span>
                                             <span className="ml-auto flex gap-2">

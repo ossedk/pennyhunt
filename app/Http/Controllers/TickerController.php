@@ -6,6 +6,7 @@ use App\Jobs\Ingestion\PullTwitterForTicker;
 use App\Jobs\Ingestion\SyncCompanyProfile;
 use App\Jobs\Ingestion\SyncTickerNews;
 use App\Models\AggregatorSnapshot;
+use App\Models\AuthorLeaderboard;
 use App\Models\MarketBar;
 use App\Models\RawPost;
 use App\Models\Ticker;
@@ -181,6 +182,30 @@ class TickerController extends Controller
             'source' => $post->source->only(['key', 'name']),
             'author' => $post->author?->only(['username', 'karma', 'pump_risk_score']),
             'sentiment' => $post->sentiment?->only(['lexicon_score', 'llm_direction', 'llm_post_type', 'llm_pump_suspicion']),
+            // Ranked-voice badge: is the buzz backed by an author with a
+            // proven graded track record? (rank on the current leaderboard)
+            'voice_rank' => $post->author_id !== null ? ($this->voiceRanks()[$post->author_id] ?? null) : null,
         ];
     }
+
+    /**
+     * Current leaderboard ranks keyed by author id — one cached query per
+     * request instead of one per post.
+     *
+     * @return array<int, int>
+     */
+    protected function voiceRanks(): array
+    {
+        return $this->voiceRanks ??= (function (): array {
+            $week = AuthorLeaderboard::currentWeek();
+
+            return $week === null ? [] : AuthorLeaderboard::query()
+                ->where('week_start', $week)
+                ->pluck('rank', 'author_id')
+                ->all();
+        })();
+    }
+
+    /** @var array<int, int>|null */
+    protected ?array $voiceRanks = null;
 }

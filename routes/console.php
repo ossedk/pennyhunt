@@ -7,6 +7,7 @@ use App\Jobs\Ingestion\PollTradestie;
 use App\Jobs\Ingestion\PollTwitterViaApify;
 use App\Jobs\Ingestion\SyncTickerUniverse;
 use App\Jobs\Ingestion\SyncTrendingNews;
+use App\Jobs\Metrics\BuildAuthorLeaderboard;
 use App\Jobs\Metrics\BuildTickerMetrics;
 use App\Jobs\Metrics\ScoreAuthorPumpRisk;
 use App\Jobs\Metrics\ScoreAuthorTrackRecords;
@@ -96,6 +97,10 @@ Schedule::job(new RefreshOpenTradeQuotes)
     ->onOneServer();
 Schedule::job(new ScoreAuthorPumpRisk)->dailyAt('04:30')->name('score-pump-risk')->onOneServer();
 Schedule::job(new ScoreAuthorTrackRecords)->dailyAt('06:30')->name('score-author-track-records')->onOneServer();
+
+// Voices leaderboard: weekly Monday build after the daily bar sync, so the
+// prior week's calls grade against complete forward windows.
+Schedule::job(new BuildAuthorLeaderboard)->weeklyOn(1, '07:30')->name('build-author-leaderboard')->onOneServer();
 
 // Fresh daily bars for every recently-mentioned ticker so the SignalEngine's
 // market-confirmation gate (price cap + volume z) rarely needs on-demand

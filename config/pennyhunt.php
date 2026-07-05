@@ -178,6 +178,30 @@ return [
     | Signal engine
     |--------------------------------------------------------------------------
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Voices leaderboard — grading reddit authors' calls against market bars
+    |--------------------------------------------------------------------------
+    | A call = an author's first non-bearish post mentioning a ticker (14-day
+    | dedupe window), priced at the next session open. Win/loss thresholds
+    | mirror the backtester's hit definition so numbers are comparable.
+    */
+    'voices' => [
+        // Peak close within the horizon must clear this to count as a win.
+        'win_threshold' => (float) env('PENNYHUNT_VOICES_WIN', 0.30),
+        // Day-horizon close at/below this is a loss; between = flat.
+        'loss_threshold' => (float) env('PENNYHUNT_VOICES_LOSS', -0.15),
+        // Trading sessions after entry used for grading.
+        'horizon_sessions' => 5,
+        // A new post by the same author on the same ticker within this many
+        // days is the same call, not a new one.
+        'dedupe_days' => 14,
+        // Minimum graded (non-pending) calls before an author can rank.
+        'min_calls' => 5,
+        // Rows kept per weekly snapshot.
+        'leaderboard_size' => 25,
+    ],
+
     'signals' => [
         // Composite score threshold above which a signal is fired.
         'fire_threshold' => (float) env('PENNYHUNT_SIGNAL_THRESHOLD', 0.65),

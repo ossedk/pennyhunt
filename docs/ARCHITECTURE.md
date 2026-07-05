@@ -98,6 +98,11 @@ PollTwitterViaApify → ApifyClient (apidojo/twitter-scraper-lite, event-priced)
 
 PollRedditSubreddit → RedditClient (app-only OAuth, fallback) → RedditIngestor
   → raw_posts (dedupe on source+external_id) + authors
+  → BuildAuthorLeaderboard (weekly Mon 07:30)                      [queue: metrics]
+      AuthorCallGrader: opens author calls from reddit mentions
+      (non-bearish, 14d dedupe), grades vs market_bars (entry next open,
+      win = +30% peak in 5 sessions), snapshots Wilson-ranked
+      author_leaderboards → /voices page + voice badge on ticker posts
   → ProcessRawPost per new post                                    [queue: pipeline]
       ├─ TickerExtractor → post_ticker_mentions (confidence-tiered:
       │  1.0 cashtag — the only tier for tweets; 0.7 bare non-word symbol

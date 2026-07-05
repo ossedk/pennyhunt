@@ -1,5 +1,5 @@
 import { Link } from '@inertiajs/react';
-import { Activity, FlaskConical, LayoutDashboard, Radar, Rss, Server, Star } from 'lucide-react';
+import { Activity, FlaskConical, LayoutDashboard, Radar, Rss, Server, Star, Trophy } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -12,7 +12,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { backtests, dashboard, feed, radar, signals, sources, watchlists } from '@/routes';
+import { backtests, dashboard, feed, radar, signals, sources, voices, watchlists } from '@/routes';
 import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
@@ -35,6 +35,11 @@ const mainNavItems: NavItem[] = [
         title: 'Signals',
         href: signals(),
         icon: Activity,
+    },
+    {
+        title: 'Voices',
+        href: voices(),
+        icon: Trophy,
     },
     {
         title: 'Backtests',

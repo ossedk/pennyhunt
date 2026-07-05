@@ -424,6 +424,22 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   open / pre-market / after-hours / closed as a `MarketStatusBadge` on
   the ticker page, signal cockpit and blotter, so quotes and unrealized
   P&L are always read with session context.
+- ✅ **Voices leaderboard (2026-07-05)** — weekly-updating ranked board of
+  reddit authors who are consistently early on stocks that explode.
+  A *call* = an author's first non-bearish reddit post mentioning a ticker
+  (14-day dedupe, LLM bearish/off-topic excluded), priced at next session
+  open like the backtester; *win* = peak close ≥ +30% within 5 sessions,
+  *loss* = day-5 close ≤ −15%, else *flat*. Ranked by 95% Wilson score
+  lower bound on win rate (min 5 graded calls) so lucky small samples
+  can't top proven repeat callers. Pre-call 3-day run-up stored per call
+  to separate early callers from momentum chasers. Tables:
+  `author_calls` (auditable per-call grades) + `author_leaderboards`
+  (weekly snapshots with best call, top tickers, recent calls jsonb).
+  `BuildAuthorLeaderboard` runs Mondays 07:30 UTC after bar sync.
+  New `/voices` page (rank, hitrate, W/F/L, confidence, avg/best peak,
+  favorite tickers, expandable graded call history) + amber `voice #N`
+  badge on ticker-page posts, so buzz shows instantly whether credible
+  callers are behind it. Tests: AuthorLeaderboardTest (4).
 - ✅ **Mention precision overhaul (2026-07-05)** — "$NOW HIT THE BOTTOM"
   was counting as a $HIT mention. Four layers, extraction → display:
   (1) `TickerExtractor` — tweets are cashtag-only; bare-word matches get
