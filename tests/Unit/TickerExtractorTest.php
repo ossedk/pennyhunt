@@ -112,7 +112,22 @@ class TickerExtractorTest extends TestCase
         // "$hit" = censored "shit", not the HIT ticker.
         $this->assertArrayNotHasKey('HIT', $extractor->extract('Rep. Crock of $hit!! We will disrespect you'));
 
+        // Mid-word "$" is never a cashtag boundary.
+        $this->assertArrayNotHasKey('HIT', $extractor->extract('Exness scam reviews - I call bull$hit'));
+
         // Deliberate uppercase cashtag still counts.
         $this->assertArrayHasKey('HIT', $extractor->extract('Loading $HIT before earnings'));
+    }
+
+    public function test_cue_rescue_is_position_aware(): void
+    {
+        $extractor = app(TickerExtractor::class);
+
+        // "Earnings HIT different" — cue noun BEFORE a verb usage must not rescue.
+        $this->assertArrayNotHasKey('HIT', $extractor->extract('Stop losses hit, cheap calls, Earnings HIT different'));
+
+        // Noun cue directly after ("HIT shares") and trading verb before ("bought more HIT") do.
+        $this->assertArrayHasKey('HIT', $extractor->extract('Bought more HIT shares this morning'));
+        $this->assertArrayHasKey('HIT', $extractor->extract('I bought more HIT at the open'));
     }
 }

@@ -25,15 +25,24 @@ use Illuminate\Support\Facades\Cache;
 class TickerExtractor
 {
     /**
-     * Words that, when directly adjacent to an English-word symbol, signal
-     * the token is used as a ticker ("HIT stock", "sold META", "COIN calls").
+     * Noun cues that mark the token as a ticker when they IMMEDIATELY follow
+     * it ("HIT shares", "META calls"). Position matters: "Earnings HIT
+     * different" has the cue before a verb and must NOT rescue.
      */
-    protected const FINANCE_CUES = [
+    protected const CUES_AFTER = [
         'stock', 'stocks', 'share', 'shares', 'ticker', 'calls', 'puts', 'options',
         'warrants', 'earnings', 'dilution', 'offering', 'float', 'squeeze', 'shorts',
+        'position', 'dd', 'chart', 'volume', 'price',
+    ];
+
+    /**
+     * Trading verbs that mark the token as a ticker when they appear within
+     * the two words BEFORE it ("bought more HIT", "holding META").
+     */
+    protected const CUES_BEFORE = [
         'buy', 'bought', 'buying', 'sell', 'sold', 'selling', 'long', 'short',
-        'hold', 'holding', 'held', 'add', 'added', 'adding', 'trim', 'trimmed',
-        'position', 'entry', 'exit', 'pt', 'target', 'dd', 'yolo', 'moon',
+        'shorting', 'hold', 'holding', 'held', 'add', 'added', 'adding',
+        'trim', 'trimmed', 'yolo', 'ticker',
     ];
 
     /**
@@ -57,8 +66,9 @@ class TickerExtractor
 
         $found = [];
 
-        // Tier 1: cashtags — $ABCD (1-5 letters, optional .X suffix)
-        preg_match_all('/\$([A-Za-z]{1,5})(?:\.[A-Za-z])?\b/', $text, $cashtagMatches);
+        // Tier 1: cashtags — $ABCD (1-5 letters, optional .X suffix).
+        // Lookbehind stops mid-word matches: "bull$hit" is not a $HIT tag.
+        preg_match_all('/(?<![\w$])\$([A-Za-z]{1,5})(?:\.[A-Za-z])?\b/', $text, $cashtagMatches);
         foreach ($cashtagMatches[1] as $raw) {
             $symbol = strtoupper($raw);
 
@@ -121,8 +131,9 @@ class TickerExtractor
     }
 
     /**
-     * True when one of the two tokens on either side of the candidate is a
-     * finance cue — the only way an English-word symbol counts bare.
+     * Position-aware cue rescue — the only way an English-word symbol
+     * counts bare: a noun cue immediately after it ("HIT shares") or a
+     * trading verb within the two words before it ("bought more HIT").
      */
     protected function hasAdjacentFinanceCue(string $text, int $offset, string $symbol): bool
     {
@@ -132,13 +143,14 @@ class TickerExtractor
         preg_match_all('/[A-Za-z]+/', $before, $b);
         preg_match_all('/[A-Za-z]+/', $after, $a);
 
-        $adjacent = [
-            ...array_slice($b[0], -2),
-            ...array_slice($a[0], 0, 2),
-        ];
+        $next = strtolower($a[0][0] ?? '');
 
-        foreach ($adjacent as $word) {
-            if (in_array(strtolower($word), self::FINANCE_CUES, true)) {
+        if (in_array($next, self::CUES_AFTER, true)) {
+            return true;
+        }
+
+        foreach (array_slice($b[0], -2) as $word) {
+            if (in_array(strtolower($word), self::CUES_BEFORE, true)) {
                 return true;
             }
         }
