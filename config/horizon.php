@@ -208,9 +208,24 @@ return [
             'memory' => 192,
             'tries' => 1,
             // Must cover PollRedditViaApify (900s) and stay below the queue's
-            // retry_after (960s) so jobs are never retried mid-flight.
+            // retry_after so jobs are never retried mid-flight.
             'timeout' => 900,
             'nice' => 0,
+        ],
+        // Backtests get their own lane: hour-long replays with a multi-GB
+        // memory raise must never block (or be killed by) the 900s
+        // supervisor that keeps ingestion flowing.
+        'supervisor-backtests' => [
+            'connection' => 'redis',
+            'queue' => ['backtests'],
+            'balance' => 'auto',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 3200,
+            'tries' => 1,
+            'timeout' => 3600,
+            'nice' => 5,
         ],
     ],
 
@@ -221,11 +236,17 @@ return [
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
+            'supervisor-backtests' => [
+                'maxProcesses' => 1,
+            ],
         ],
 
         'local' => [
             'supervisor-1' => [
                 'maxProcesses' => 6,
+            ],
+            'supervisor-backtests' => [
+                'maxProcesses' => 1,
             ],
         ],
     ],

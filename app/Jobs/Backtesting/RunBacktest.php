@@ -17,11 +17,14 @@ class RunBacktest implements ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 600;
+    // A 6-month window took ~10min on prod hardware (slower than the dev
+    // Mac this was tuned on); 24 months needs real headroom. Must stay
+    // below the redis connection's retry_after (REDIS_QUEUE_RETRY_AFTER).
+    public int $timeout = 3600;
 
     public function __construct(public int $backtestRunId)
     {
-        $this->onQueue('metrics');
+        $this->onQueue('backtests');
     }
 
     public function handle(Backtester $backtester): void
