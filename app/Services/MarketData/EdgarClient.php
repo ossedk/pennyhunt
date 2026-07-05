@@ -67,6 +67,11 @@ class EdgarClient
      */
     public function form4Transactions(int $cik, string $accession, string $primaryDocument): array
     {
+        // The submissions index lists the XSLT-rendered HTML view
+        // ("xslF345X06/foo.xml"); the raw XML is the same filename without
+        // the xsl prefix directory.
+        $primaryDocument = preg_replace('#^xsl[^/]*/#i', '', $primaryDocument);
+
         $url = sprintf(
             'https://www.sec.gov/Archives/edgar/data/%d/%s/%s',
             $cik,
@@ -76,11 +81,14 @@ class EdgarClient
 
         $body = $this->get($url)?->body();
 
-        if ($body === null || trim($body) === '') {
+        if ($body === null || trim($body) === '' || str_starts_with(ltrim($body), '<!DOCTYPE html')) {
             return [];
         }
 
-        $xml = @simplexml_load_string($body);
+        $previous = libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($body);
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
 
         if ($xml === false) {
             return [];
