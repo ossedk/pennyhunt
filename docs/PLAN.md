@@ -424,6 +424,22 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
   open / pre-market / after-hours / closed as a `MarketStatusBadge` on
   the ticker page, signal cockpit and blotter, so quotes and unrealized
   P&L are always read with session context.
+- ✅ **Signal cockpit v2 (2026-07-05)** — (1) `CandleChart` now has full
+  trader interactions: wheel zoom, drag pan, pinch, axis-drag scaling,
+  double-click/⟲ reset; (2) per-signal LLM brief ("What to look for"):
+  `SignalBriefWriter` builds a closed-world context from the signal's
+  own stored breakdown + trade discipline + recent posts/news and emits
+  {summary, watch_for[], invalidation, risk}; generated on fire
+  (`GenerateSignalBrief`), lazily backfilled on view; (3)
+  `pennyhunt:enrich-signal {id}` upgrades an old signal's breakdown to
+  the current feature schema as-of its fire date (ran on signal #1);
+  (4) **HypeSwarm** (p5.js) on signal pages: animated crowd-momentum
+  playback from 48h pre-fire — particles = attention, color =
+  sentiment, jitter = hype vs DD, labeled comets = loud authors (amber
+  = ranked Voices), core pulses with mention z, dashed critical-mass
+  ring ignites at z≥3, amber flash at the fire moment, click-to-scrub
+  timeline with mention histogram, 5-min data refresh when live.
+  Endpoint: `GET /signals/{id}/swarm`. Tests: SignalBriefAndSwarmTest.
 - ✅ **Phase D: market-structure features (2026-07-05)** — five new
   feature blocks, wired end-to-end (Backtester → backtest_events →
   ConfidenceTrainer/GBM → live SignalEngine → ticker-page UI):
