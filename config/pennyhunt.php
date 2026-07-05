@@ -206,8 +206,11 @@ return [
         // Wilson ranking keeps small samples honest anyway.
         'min_calls_twitter' => 3,
         // Only authors who posted within this many days can rank — dormant
-        // accounts are history, not voices.
+        // accounts are history, not voices. X gets a wider window: our view
+        // of X activity is partial (on-demand pulls), so a hard 21 days
+        // would drop accounts we simply haven't pulled lately.
         'active_days' => 21,
+        'active_days_twitter' => 45,
         // Rows kept per weekly snapshot (per platform).
         'leaderboard_size' => 25,
     ],

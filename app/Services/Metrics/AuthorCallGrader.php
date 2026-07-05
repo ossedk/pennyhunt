@@ -147,7 +147,6 @@ class AuthorCallGrader
     {
         $weekStart ??= now()->startOfWeek();
         $size = (int) config('pennyhunt.voices.leaderboard_size');
-        $activeDays = (int) config('pennyhunt.voices.active_days');
 
         AuthorLeaderboard::query()->whereDate('week_start', $weekStart->toDateString())->delete();
 
@@ -157,6 +156,10 @@ class AuthorCallGrader
             $minCalls = $platform === 'twitter'
                 ? (int) config('pennyhunt.voices.min_calls_twitter')
                 : (int) config('pennyhunt.voices.min_calls');
+
+            $activeDays = $platform === 'twitter'
+                ? (int) config('pennyhunt.voices.active_days_twitter')
+                : (int) config('pennyhunt.voices.active_days');
 
             $rows = DB::select(<<<'SQL'
                 SELECT c.author_id,
