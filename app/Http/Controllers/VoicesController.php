@@ -20,13 +20,17 @@ class VoicesController extends Controller
         $rows = $week === null ? collect() : AuthorLeaderboard::query()
             ->where('week_start', $week)
             ->orderBy('rank')
-            ->with('author:id,username,karma,pump_risk_score,account_created_at')
+            ->with('author:id,platform,username,karma,stats,pump_risk_score,account_created_at')
             ->get()
             ->map(fn (AuthorLeaderboard $row): array => [
                 'rank' => $row->rank,
+                'platform' => $row->platform,
                 'author' => [
                     'username' => $row->author?->username,
-                    'karma' => $row->author?->karma,
+                    // Reddit reach = karma; X reach = followers.
+                    'karma' => $row->platform === 'twitter'
+                        ? data_get($row->author?->stats, 'followers')
+                        : $row->author?->karma,
                     'pump_risk_score' => $row->author?->pump_risk_score,
                     'account_created_at' => $row->author?->account_created_at?->toDateString(),
                 ],
@@ -45,12 +49,17 @@ class VoicesController extends Controller
 
         return Inertia::render('voices', [
             'week' => $week,
-            'rows' => $rows,
+            'boards' => [
+                'reddit' => $rows->where('platform', 'reddit')->values(),
+                'twitter' => $rows->where('platform', 'twitter')->values(),
+            ],
             'thresholds' => [
                 'win' => (float) config('pennyhunt.voices.win_threshold'),
                 'loss' => (float) config('pennyhunt.voices.loss_threshold'),
                 'horizon' => (int) config('pennyhunt.voices.horizon_sessions'),
                 'min_calls' => (int) config('pennyhunt.voices.min_calls'),
+                'min_calls_twitter' => (int) config('pennyhunt.voices.min_calls_twitter'),
+                'active_days' => (int) config('pennyhunt.voices.active_days'),
             ],
         ]);
     }

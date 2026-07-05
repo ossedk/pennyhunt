@@ -26,10 +26,13 @@ class AuthorCallGrader
     public function openCalls(): int
     {
         $dedupeDays = (int) config('pennyhunt.voices.dedupe_days');
+        $minLikes = (int) config('pennyhunt.apify.twitter.min_likes');
 
         // One candidate per (author, ticker, 14-day bin) inside the batch;
         // NOT EXISTS enforces the dedupe against already-open calls. Bearish
-        // and LLM off-topic posts never open calls.
+        // and LLM off-topic posts never open calls. Twitter calls (cashtag-
+        // only mentions post-purge) additionally need the like floor so
+        // zero-engagement spam accounts don't flood the call table.
         return DB::affectingStatement(<<<'SQL'
             INSERT INTO author_calls (author_id, ticker_id, raw_post_id, called_at, outcome, created_at, updated_at)
             SELECT DISTINCT ON (c.author_id, c.ticker_id, c.bin)
@@ -42,7 +45,10 @@ class AuthorCallGrader
                 JOIN raw_posts p ON p.id = m.raw_post_id
                 JOIN sources s ON s.id = p.source_id
                 LEFT JOIN post_sentiments ps ON ps.raw_post_id = p.id
-                WHERE s.type = 'reddit'
+                WHERE (
+                        s.type = 'reddit'
+                        OR (s.type = 'twitter' AND p.score >= ?)
+                      )
                   AND p.author_id IS NOT NULL
                   AND COALESCE(ps.llm_off_topic, false) = false
                   AND COALESCE(ps.llm_direction, '') <> 'bearish'
@@ -55,7 +61,7 @@ class AuthorCallGrader
                   AND ac.called_at <= c.posted_at
             )
             ORDER BY c.author_id, c.ticker_id, c.bin, c.posted_at
-        SQL, [$dedupeDays, $dedupeDays]);
+        SQL, [$dedupeDays, $minLikes, $dedupeDays]);
     }
 
     /**
@@ -130,62 +136,85 @@ class AuthorCallGrader
         return $graded;
     }
 
-    /** Builds the ranked weekly snapshot. Returns rows written. */
+    /**
+     * Builds the ranked weekly snapshot — one independent board per
+     * platform. Only ACTIVE authors rank (posted within active_days):
+     * dormant accounts are history, not voices.
+     *
+     * Returns total rows written across platforms.
+     */
     public function snapshot(?CarbonInterface $weekStart = null): int
     {
         $weekStart ??= now()->startOfWeek();
-        $minCalls = (int) config('pennyhunt.voices.min_calls');
         $size = (int) config('pennyhunt.voices.leaderboard_size');
-
-        $rows = DB::select(<<<'SQL'
-            SELECT author_id,
-                   COUNT(*) AS calls,
-                   SUM(CASE WHEN outcome = 'win' THEN 1 ELSE 0 END) AS wins,
-                   SUM(CASE WHEN outcome = 'flat' THEN 1 ELSE 0 END) AS flats,
-                   SUM(CASE WHEN outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
-                   AVG(peak_return) AS avg_peak,
-                   MAX(peak_return) AS best_peak
-            FROM author_calls
-            WHERE outcome IN ('win', 'flat', 'loss')
-            GROUP BY author_id
-            HAVING COUNT(*) >= ?
-        SQL, [$minCalls]);
-
-        $ranked = collect($rows)
-            ->map(function (object $r): array {
-                $n = (int) $r->calls;
-                $wins = (int) $r->wins;
-
-                return [
-                    'author_id' => (int) $r->author_id,
-                    'calls' => $n,
-                    'wins' => $wins,
-                    'flats' => (int) $r->flats,
-                    'losses' => (int) $r->losses,
-                    'hit_rate' => round($wins / $n, 4),
-                    'wilson_lb' => round($this->wilsonLowerBound($wins, $n), 4),
-                    'avg_peak_return' => $r->avg_peak !== null ? round((float) $r->avg_peak, 4) : null,
-                    'best_peak_return' => $r->best_peak !== null ? round((float) $r->best_peak, 4) : null,
-                ];
-            })
-            ->sortByDesc('wilson_lb')
-            ->take($size)
-            ->values();
+        $activeDays = (int) config('pennyhunt.voices.active_days');
 
         AuthorLeaderboard::query()->whereDate('week_start', $weekStart->toDateString())->delete();
 
-        foreach ($ranked as $i => $row) {
-            AuthorLeaderboard::create([
-                ...$row,
-                'week_start' => $weekStart->toDateString(),
-                'rank' => $i + 1,
-                'best_call' => $this->bestCall($row['author_id']),
-                'top_tickers' => $this->topTickers($row['author_id']),
-                'recent_calls' => $this->recentCalls($row['author_id']),
-            ]);
+        $written = 0;
+
+        foreach (['reddit', 'twitter'] as $platform) {
+            $minCalls = $platform === 'twitter'
+                ? (int) config('pennyhunt.voices.min_calls_twitter')
+                : (int) config('pennyhunt.voices.min_calls');
+
+            $rows = DB::select(<<<'SQL'
+                SELECT c.author_id,
+                       COUNT(*) AS calls,
+                       SUM(CASE WHEN c.outcome = 'win' THEN 1 ELSE 0 END) AS wins,
+                       SUM(CASE WHEN c.outcome = 'flat' THEN 1 ELSE 0 END) AS flats,
+                       SUM(CASE WHEN c.outcome = 'loss' THEN 1 ELSE 0 END) AS losses,
+                       AVG(c.peak_return) AS avg_peak,
+                       MAX(c.peak_return) AS best_peak
+                FROM author_calls c
+                JOIN authors a ON a.id = c.author_id
+                WHERE c.outcome IN ('win', 'flat', 'loss')
+                  AND a.platform = ?
+                  AND EXISTS (
+                      SELECT 1 FROM raw_posts p
+                      WHERE p.author_id = c.author_id AND p.posted_at >= ?
+                  )
+                GROUP BY c.author_id
+                HAVING COUNT(*) >= ?
+            SQL, [$platform, now()->subDays($activeDays), $minCalls]);
+
+            $ranked = collect($rows)
+                ->map(function (object $r): array {
+                    $n = (int) $r->calls;
+                    $wins = (int) $r->wins;
+
+                    return [
+                        'author_id' => (int) $r->author_id,
+                        'calls' => $n,
+                        'wins' => $wins,
+                        'flats' => (int) $r->flats,
+                        'losses' => (int) $r->losses,
+                        'hit_rate' => round($wins / $n, 4),
+                        'wilson_lb' => round($this->wilsonLowerBound($wins, $n), 4),
+                        'avg_peak_return' => $r->avg_peak !== null ? round((float) $r->avg_peak, 4) : null,
+                        'best_peak_return' => $r->best_peak !== null ? round((float) $r->best_peak, 4) : null,
+                    ];
+                })
+                ->sortByDesc('wilson_lb')
+                ->take($size)
+                ->values();
+
+            foreach ($ranked as $i => $row) {
+                AuthorLeaderboard::create([
+                    ...$row,
+                    'week_start' => $weekStart->toDateString(),
+                    'platform' => $platform,
+                    'rank' => $i + 1,
+                    'best_call' => $this->bestCall($row['author_id']),
+                    'top_tickers' => $this->topTickers($row['author_id']),
+                    'recent_calls' => $this->recentCalls($row['author_id']),
+                ]);
+            }
+
+            $written += $ranked->count();
         }
 
-        return $ranked->count();
+        return $written;
     }
 
     /**

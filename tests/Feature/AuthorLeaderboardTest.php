@@ -3,16 +3,40 @@
 use App\Models\Author;
 use App\Models\AuthorCall;
 use App\Models\AuthorLeaderboard;
+use App\Models\RawPost;
+use App\Models\Source;
 use App\Models\Ticker;
 use App\Models\User;
 use App\Services\Metrics\AuthorCallGrader;
+use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
-function voiceAuthor(string $username): Author
+/** Creates an author with a recent post (the board only ranks active authors). */
+function voiceAuthor(string $username, string $platform = 'reddit', ?CarbonInterface $lastPostAt = null): Author
 {
-    return Author::create(['platform' => 'reddit', 'username' => $username, 'stats' => [], 'karma' => 5000]);
+    $author = Author::create(['platform' => $platform, 'username' => $username, 'stats' => [], 'karma' => 5000]);
+
+    $source = Source::firstOrCreate(
+        ['key' => $platform.':test'],
+        ['type' => $platform, 'name' => $platform.' test', 'enabled' => true, 'poll_interval_seconds' => 120, 'config' => []],
+    );
+
+    RawPost::create([
+        'source_id' => $source->id,
+        'external_id' => 'act_'.$username,
+        'kind' => 'post',
+        'author_id' => $author->id,
+        'body' => 'still around',
+        'score' => 10,
+        'num_comments' => 0,
+        'posted_at' => $lastPostAt ?? now()->subDay(),
+        'ingested_at' => now(),
+        'meta' => [],
+    ]);
+
+    return $author;
 }
 
 function gradedCall(Author $author, Ticker $ticker, string $outcome, float $peak, ?float $day5 = null): AuthorCall
@@ -110,6 +134,31 @@ it('rebuilding the same week replaces the snapshot instead of duplicating', func
     expect(AuthorLeaderboard::count())->toBe(1);
 });
 
+it('excludes dormant authors and ranks platforms independently', function () {
+    config(['pennyhunt.voices.min_calls' => 1, 'pennyhunt.voices.min_calls_twitter' => 1, 'pennyhunt.voices.active_days' => 21]);
+
+    $ticker = Ticker::create(['symbol' => 'ABCD', 'name' => 'Abcd Corp', 'is_active' => true]);
+
+    $activeReddit = voiceAuthor('active_red');
+    gradedCall($activeReddit, $ticker, 'win', 0.5);
+
+    // Great record, but hasn't posted in 60 days — must not rank.
+    $dormant = voiceAuthor('gone_guy', 'reddit', now()->subDays(60));
+    gradedCall($dormant, $ticker, 'win', 0.9);
+
+    $activeTwitter = voiceAuthor('active_bird', 'twitter');
+    gradedCall($activeTwitter, $ticker, 'win', 0.4);
+
+    app(AuthorCallGrader::class)->snapshot(now()->startOfWeek());
+
+    $board = AuthorLeaderboard::query()->with('author')->get();
+
+    expect($board->pluck('author.username')->sort()->values()->all())->toBe(['active_bird', 'active_red'])
+        // Each platform board ranks from 1 independently.
+        ->and($board->firstWhere('platform', 'reddit')->rank)->toBe(1)
+        ->and($board->firstWhere('platform', 'twitter')->rank)->toBe(1);
+});
+
 it('renders the voices page with the latest snapshot', function () {
     config(['pennyhunt.voices.min_calls' => 1]);
 
@@ -124,7 +173,8 @@ it('renders the voices page with the latest snapshot', function () {
         ->assertOk()
         ->assertInertia(fn ($page) => $page
             ->component('voices')
-            ->has('rows', 1)
-            ->where('rows.0.author.username', 'page_pete')
-            ->where('rows.0.wins', 1));
+            ->has('boards.reddit', 1)
+            ->where('boards.reddit.0.author.username', 'page_pete')
+            ->where('boards.reddit.0.wins', 1)
+            ->has('boards.twitter', 0));
 });

@@ -41,9 +41,18 @@ type Row = {
 
 type Props = {
     week: string | null;
-    rows: Row[];
-    thresholds: { win: number; loss: number; horizon: number; min_calls: number };
+    boards: { reddit: Row[]; twitter: Row[] };
+    thresholds: {
+        win: number;
+        loss: number;
+        horizon: number;
+        min_calls: number;
+        min_calls_twitter: number;
+        active_days: number;
+    };
 };
+
+type Platform = 'reddit' | 'twitter';
 
 const pct = (value: number | null | undefined, digits = 0) =>
     value === null || value === undefined ? '—' : `${value >= 0 ? '+' : ''}${(value * 100).toFixed(digits)}%`;
@@ -58,8 +67,11 @@ function OutcomeBadge({ outcome }: { outcome: RecentCall['outcome'] }) {
     return <Badge className={cn('font-mono text-[10px] uppercase', styles[outcome])}>{outcome}</Badge>;
 }
 
-export default function Voices({ week, rows, thresholds }: Props) {
+export default function Voices({ week, boards, thresholds }: Props) {
     const [expanded, setExpanded] = useState<number | null>(null);
+    const [platform, setPlatform] = useState<Platform>('reddit');
+    const rows = boards[platform];
+    const minCalls = platform === 'twitter' ? thresholds.min_calls_twitter : thresholds.min_calls;
 
     return (
         <>
@@ -72,10 +84,12 @@ export default function Voices({ week, rows, thresholds }: Props) {
                             Voices — who actually calls the winners
                         </h1>
                         <p className="text-sm text-muted-foreground">
-                            Reddit authors ranked by graded track record. A call is the author's first bullish post on
-                            a ticker, priced at the next session open; a win means the stock gained{' '}
-                            {pct(thresholds.win)} within {thresholds.horizon} sessions. Ranked by Wilson lower bound so
-                            small lucky samples can't top the board. Minimum {thresholds.min_calls} graded calls.
+                            Authors ranked by graded track record. A call is the author's first bullish post on a
+                            ticker, priced at the next session open; a win means the stock gained {pct(thresholds.win)}{' '}
+                            within {thresholds.horizon} sessions. Ranked by Wilson lower bound so small lucky samples
+                            can't top the board. Minimum {minCalls} graded calls, and only{' '}
+                            <span className="text-foreground">active authors</span> (posted within{' '}
+                            {thresholds.active_days} days) rank — dormant accounts drop off.
                         </p>
                     </div>
                     {week && (
@@ -87,18 +101,45 @@ export default function Voices({ week, rows, thresholds }: Props) {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle className="text-base">Top {rows.length} voices</CardTitle>
-                        <CardDescription>
-                            Click a row to see the author's recent graded calls. Run-up shows how much the stock had
-                            already moved in the 3 sessions before the call — low run-up means genuinely early, high
-                            run-up means momentum chasing.
-                        </CardDescription>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <CardTitle className="text-base">
+                                    Top {rows.length} {platform === 'reddit' ? 'Reddit' : 'X / Twitter'} voices
+                                </CardTitle>
+                                <CardDescription>
+                                    Click a row to see the author's recent graded calls. Run-up shows how much the
+                                    stock had already moved in the 3 sessions before the call — low run-up means
+                                    genuinely early, high run-up means momentum chasing.
+                                </CardDescription>
+                            </div>
+                            <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
+                                {(['reddit', 'twitter'] as const).map((p) => (
+                                    <button
+                                        key={p}
+                                        type="button"
+                                        onClick={() => {
+                                            setPlatform(p);
+                                            setExpanded(null);
+                                        }}
+                                        className={cn(
+                                            'rounded px-3 py-1 text-xs font-medium transition-colors',
+                                            platform === p
+                                                ? 'bg-secondary text-foreground'
+                                                : 'text-muted-foreground hover:text-foreground',
+                                        )}
+                                    >
+                                        {p === 'reddit' ? 'Reddit' : 'X / Twitter'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </CardHeader>
                     <CardContent>
                         {rows.length === 0 ? (
                             <p className="py-8 text-center text-sm text-muted-foreground">
-                                No leaderboard yet — the weekly build runs Monday mornings, or trigger{' '}
-                                <code>BuildAuthorLeaderboard</code> manually.
+                                {platform === 'twitter'
+                                    ? `No ranked X voices yet — X coverage grows with on-demand pulls, and authors need ${minCalls} graded calls plus activity in the last ${thresholds.active_days} days.`
+                                    : 'No leaderboard yet — the weekly build runs Monday mornings.'}
                             </p>
                         ) : (
                             <Table>
@@ -126,10 +167,13 @@ export default function Voices({ week, rows, thresholds }: Props) {
                                                     {row.rank}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <span className="font-semibold">u/{row.author.username}</span>
+                                                    <span className="font-semibold">
+                                                        {platform === 'reddit' ? 'u/' : '@'}
+                                                        {row.author.username}
+                                                    </span>
                                                     <span className="ml-2 text-xs text-muted-foreground">
                                                         {row.author.karma !== null &&
-                                                            `${Intl.NumberFormat('en', { notation: 'compact' }).format(row.author.karma)} karma`}
+                                                            `${Intl.NumberFormat('en', { notation: 'compact' }).format(row.author.karma)} ${platform === 'reddit' ? 'karma' : 'followers'}`}
                                                     </span>
                                                     {(row.author.pump_risk_score ?? 0) >= 0.5 && (
                                                         <Badge className="ml-2 bg-orange-500/15 text-[10px] text-orange-600 dark:text-orange-400">

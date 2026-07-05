@@ -202,7 +202,13 @@ return [
         'dedupe_days' => 14,
         // Minimum graded (non-pending) calls before an author can rank.
         'min_calls' => 5,
-        // Rows kept per weekly snapshot.
+        // Twitter coverage is younger/sparser (on-demand pulls) — lower bar,
+        // Wilson ranking keeps small samples honest anyway.
+        'min_calls_twitter' => 3,
+        // Only authors who posted within this many days can rank — dormant
+        // accounts are history, not voices.
+        'active_days' => 21,
+        // Rows kept per weekly snapshot (per platform).
         'leaderboard_size' => 25,
     ],
 
