@@ -1,0 +1,269 @@
+<?php
+
+namespace App\Console\Commands;
+
+use App\Services\Backtesting\ExitSimulator;
+use App\Services\Backtesting\FrictionModel;
+use App\Support\AnalyticsGate;
+use App\Support\Memory;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * The Exit Lab: re-simulates a backtest run's FIRED trades under a grid of
+ * exit disciplines — seconds per config instead of a 45-minute backtest.
+ * Same events, same entries; only the exit rules differ, so differences
+ * between rows are pure exit-rule effect.
+ *
+ * Overfitting guards: rules carry physical rationale (ATR = the stock's own
+ * noise floor), the grid is small, and every config reports a first-half /
+ * second-half split — a rule that only works in one half is curve fit.
+ */
+class ExitLab extends Command
+{
+    protected $signature = 'pennyhunt:exit-lab
+        {--run= : Backtest run id (default: latest done)}
+        {--tier= : Only events with walk-forward confidence >= this (e.g. 0.13)}';
+
+    protected $description = 'Grid-test exit disciplines over a run\'s fired trades';
+
+    /** @return array<string, array<string, mixed>> */
+    protected function grid(): array
+    {
+        return [
+            'legacy (10% stop, 5d)' => ['stop_loss' => 0.10, 'max_hold' => 5],
+            'atr 1.5x, 5d' => ['atr_stop_mult' => 1.5, 'max_hold' => 5],
+            'atr 2.0x, 5d' => ['atr_stop_mult' => 2.0, 'max_hold' => 5],
+            'atr 2.5x, 5d' => ['atr_stop_mult' => 2.5, 'max_hold' => 5],
+            'atr 2x, 10d' => ['atr_stop_mult' => 2.0, 'max_hold' => 10],
+            'atr 2x + trail 2.5x, 10d' => ['atr_stop_mult' => 2.0, 'trail_atr_mult' => 2.5, 'max_hold' => 10],
+            'atr 2x + partial@30 + trail' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'max_hold' => 10],
+            'atr 2x + collapse 25%' => ['atr_stop_mult' => 2.0, 'mention_collapse_frac' => 0.25, 'max_hold' => 10],
+            'full stack' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'mention_collapse_frac' => 0.25, 'max_hold' => 10],
+            'full + gap veto 15%' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'mention_collapse_frac' => 0.25, 'max_entry_gap' => 0.15, 'max_hold' => 10],
+        ];
+    }
+
+    public function handle(ExitSimulator $simulator): int
+    {
+        Memory::raise('2048M');
+
+        $runId = $this->option('run')
+            ? (int) $this->option('run')
+            : (int) DB::table('backtest_runs')->where('status', 'done')->orderByDesc('id')->value('id');
+
+        $events = DB::table('backtest_events')
+            ->where('backtest_run_id', $runId)
+            ->where('fired', true)
+            ->when($this->option('tier') !== null, fn ($q) => $q->where('confidence', '>=', (float) $this->option('tier')))
+            ->orderBy('day')
+            ->get(['id', 'ticker_id', 'day', 'entry_date', 'entry', 'atr_pct', 'dollar_volume', 'mentions']);
+
+        if ($events->isEmpty()) {
+            $this->error("Run #{$runId}: no fired events".($this->option('tier') ? ' at that tier' : '').'.');
+
+            return self::FAILURE;
+        }
+
+        $this->info("Run #{$runId}: ".$events->count().' fired trades'.($this->option('tier') ? " (tier ≥ {$this->option('tier')})" : '').'.');
+
+        [$barsByTicker, $signalCloses] = $this->loadBars($events);
+        $mentionSeries = $this->loadMentions($events);
+
+        $midpoint = $events[intdiv($events->count(), 2)]->day;
+
+        $rows = [];
+
+        foreach ($this->grid() as $label => $config) {
+            $outcomes = [];
+
+            foreach ($events as $event) {
+                $bars = $this->window($barsByTicker[$event->ticker_id] ?? [], $event->entry_date, 11);
+
+                if ($bars === []) {
+                    continue;
+                }
+
+                $result = $simulator->simulate(
+                    $config,
+                    (float) $event->entry,
+                    $signalCloses[$event->ticker_id][$event->day] ?? 0.0,
+                    $event->atr_pct !== null ? min((float) $event->atr_pct, 1.0) : null,
+                    $bars,
+                    $this->mentionOffsets($mentionSeries[$event->ticker_id] ?? [], $event->day, $bars),
+                );
+
+                if ($result['skipped']) {
+                    continue;
+                }
+
+                $outcomes[] = [
+                    'return' => $result['return'],
+                    'reason' => $result['reason'],
+                    'net_flat' => $result['return'] - 0.05,
+                    'net_tiered' => $result['return'] - FrictionModel::roundTrip((float) $event->entry, $event->dollar_volume !== null ? (float) $event->dollar_volume : null),
+                    'half' => $event->day < $midpoint ? 1 : 2,
+                ];
+            }
+
+            $rows[] = [$label, ...$this->metrics($outcomes)];
+        }
+
+        $this->table(
+            ['config', 'n', 'avg exit', 'net (flat 5%)', 'net (tiered)', 'PF net', 'stop%', 'trail%', 'collapse%', 'net 1st half', 'net 2nd half'],
+            $rows,
+        );
+
+        return self::SUCCESS;
+    }
+
+    /** @param array<int, array<string, mixed>> $outcomes */
+    protected function metrics(array $outcomes): array
+    {
+        if ($outcomes === []) {
+            return [0, '—', '—', '—', '—', '—', '—', '—', '—', '—'];
+        }
+
+        $n = count($outcomes);
+        $avg = fn (string $k): float => array_sum(array_column($outcomes, $k)) / $n;
+        $share = fn (string $reason): string => number_format(count(array_filter($outcomes, fn ($o) => $o['reason'] === $reason)) / $n * 100, 0).'%';
+
+        $nets = array_column($outcomes, 'net_tiered');
+        $wins = array_sum(array_filter($nets, fn ($v) => $v > 0));
+        $losses = abs(array_sum(array_filter($nets, fn ($v) => $v < 0)));
+
+        $halfAvg = function (int $half) use ($outcomes): string {
+            $subset = array_filter($outcomes, fn ($o) => $o['half'] === $half);
+
+            return $subset === []
+                ? '—'
+                : sprintf('%+.1f%%', array_sum(array_column($subset, 'net_tiered')) / count($subset) * 100);
+        };
+
+        return [
+            $n,
+            sprintf('%+.1f%%', $avg('return') * 100),
+            sprintf('%+.1f%%', $avg('net_flat') * 100),
+            sprintf('%+.1f%%', $avg('net_tiered') * 100),
+            $losses > 0 ? number_format($wins / $losses, 2) : '∞',
+            $share('stop'),
+            $share('trail'),
+            $share('mention_collapse'),
+            $halfAvg(1),
+            $halfAvg(2),
+        ];
+    }
+
+    /**
+     * @return array{0: array<int, array<int, array{date: string, open: float, high: float, low: float, close: float}>>, 1: array<int, array<string, float>>}
+     */
+    protected function loadBars($events): array
+    {
+        $bars = [];
+        $signalCloses = [];
+        $signalDays = [];
+
+        foreach ($events as $event) {
+            $signalDays[$event->ticker_id][$event->day] = true;
+        }
+
+        DB::table('market_bars')
+            ->whereIn('ticker_id', $events->pluck('ticker_id')->unique())
+            ->where('interval', '1d')
+            ->orderBy('bucket_start')
+            ->select('ticker_id', 'bucket_start', 'open', 'high', 'low', 'close')
+            ->each(function ($bar) use (&$bars, &$signalCloses, $signalDays): void {
+                $date = substr((string) $bar->bucket_start, 0, 10);
+                $tickerId = (int) $bar->ticker_id;
+
+                $bars[$tickerId][] = [
+                    'date' => $date,
+                    'open' => (float) $bar->open,
+                    'high' => (float) $bar->high,
+                    'low' => (float) $bar->low,
+                    'close' => (float) $bar->close,
+                ];
+
+                if (isset($signalDays[$tickerId][$date])) {
+                    $signalCloses[$tickerId][$date] = (float) $bar->close;
+                }
+            });
+
+        return [$bars, $signalCloses];
+    }
+
+    /** Bars from entry_date onward, capped. */
+    protected function window(array $bars, string $entryDate, int $count): array
+    {
+        $out = [];
+
+        foreach ($bars as $bar) {
+            if ($bar['date'] < $entryDate) {
+                continue;
+            }
+
+            $out[] = $bar;
+
+            if (count($out) >= $count) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return array<int, array<string, int>> [tickerId => [date => mentions]] */
+    protected function loadMentions($events): array
+    {
+        $gate = AnalyticsGate::mentionJoin('m');
+        $ids = $events->pluck('ticker_id')->unique()->implode(',');
+
+        if ($ids === '') {
+            return [];
+        }
+
+        $rows = DB::select(<<<SQL
+            SELECT m.ticker_id, date(m.posted_at) AS day, COUNT(*) AS mentions
+            FROM post_ticker_mentions m
+            {$gate}
+            WHERE m.ticker_id IN ({$ids})
+            GROUP BY m.ticker_id, day
+        SQL);
+
+        $out = [];
+
+        foreach ($rows as $row) {
+            $out[(int) $row->ticker_id][(string) $row->day] = (int) $row->mentions;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Maps calendar-daily mention counts onto session offsets: each bar
+     * carries the mentions since the previous bar (weekend buzz lands on
+     * Monday). Offset -1 = the fire day itself.
+     *
+     * @param  array<string, int>  $daily
+     * @param  array<int, array{date: string}>  $bars
+     * @return array<int, int>
+     */
+    protected function mentionOffsets(array $daily, string $fireDay, array $bars): array
+    {
+        $out = [-1 => $daily[$fireDay] ?? 0];
+        $prev = $fireDay;
+
+        foreach ($bars as $offset => $bar) {
+            $sum = 0;
+
+            for ($ts = strtotime($prev.' UTC') + 86400; $ts <= strtotime($bar['date'].' UTC'); $ts += 86400) {
+                $sum += $daily[gmdate('Y-m-d', $ts)] ?? 0;
+            }
+
+            $out[$offset] = $sum;
+            $prev = $bar['date'];
+        }
+
+        return $out;
+    }
+}
