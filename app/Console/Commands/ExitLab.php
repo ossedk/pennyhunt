@@ -23,9 +23,16 @@ class ExitLab extends Command
 {
     protected $signature = 'pennyhunt:exit-lab
         {--run= : Backtest run id (default: latest done)}
+        {--all-candidates : Trade ALL candidate events passing the filters, not just composite-fired ones (model-first mode)}
         {--tier= : Only events with walk-forward confidence >= this (e.g. 0.13)}
+        {--max-tier= : Only events with walk-forward confidence below this}
         {--class= : Only this classification (prediction = pre-run <= 15%, reaction = chasing)}
-        {--max-prerun= : Only events with pre_return_3d at/below this fraction}';
+        {--max-prerun= : Only events with pre_return_3d at/below this fraction}
+        {--max-price= : Only events with entry at/below this price}
+        {--min-smallcap-rel= : Regime throttle: require smallcap_rel_20d >= this (e.g. -0.02)}
+        {--min-moonshot= : Only events with moonshot_confidence >= this}
+        {--min-meta= : Only events with meta_confidence >= this}
+        {--cooldown=10 : Per-ticker sessions between taken trades (candidate mode)}';
 
     protected $description = 'Grid-test exit disciplines over a run\'s fired trades';
 
@@ -61,25 +68,56 @@ class ExitLab extends Command
 
         $events = DB::table('backtest_events')
             ->where('backtest_run_id', $runId)
-            ->where('fired', true)
+            // Model-first mode trades every candidate event that passes the
+            // filters — the composite gate (fired) is bypassed entirely.
+            ->when(! $this->option('all-candidates'), fn ($q) => $q->where('fired', true))
             // Tier slicing prefers the GBM walk-forward score (out-of-sample);
             // logistic confidence is the fallback for events that predate it.
             ->when($this->option('tier') !== null, fn ($q) => $q->whereRaw(
                 'COALESCE(gbm_confidence, confidence) >= ?',
                 [(float) $this->option('tier')],
             ))
+            ->when($this->option('max-tier') !== null, fn ($q) => $q->whereRaw(
+                'COALESCE(gbm_confidence, confidence) < ?',
+                [(float) $this->option('max-tier')],
+            ))
             ->when($this->option('class') !== null, fn ($q) => $q->where('classification', $this->option('class')))
             ->when($this->option('max-prerun') !== null, fn ($q) => $q->where('pre_return_3d', '<=', (float) $this->option('max-prerun')))
+            ->when($this->option('max-price') !== null, fn ($q) => $q->where('entry', '<=', (float) $this->option('max-price')))
+            ->when($this->option('min-smallcap-rel') !== null, fn ($q) => $q->where('smallcap_rel_20d', '>=', (float) $this->option('min-smallcap-rel')))
+            ->when($this->option('min-moonshot') !== null, fn ($q) => $q->where('moonshot_confidence', '>=', (float) $this->option('min-moonshot')))
+            ->when($this->option('min-meta') !== null, fn ($q) => $q->where('meta_confidence', '>=', (float) $this->option('min-meta')))
             ->orderBy('day')
             ->get(['id', 'ticker_id', 'day', 'entry_date', 'entry', 'atr_pct', 'dollar_volume', 'mentions']);
 
+        // Per-ticker cooldown: candidate days cluster on runners — entering
+        // the same ticker on consecutive days pseudo-replicates one move.
+        // Keep the first event, skip re-entries inside the cooldown window.
+        $cooldownDays = max((int) $this->option('cooldown'), 0);
+
+        if ($cooldownDays > 0) {
+            $lastTaken = [];
+            $events = $events->filter(function ($event) use (&$lastTaken, $cooldownDays): bool {
+                $last = $lastTaken[$event->ticker_id] ?? null;
+
+                if ($last !== null && strtotime($event->day.' UTC') - strtotime($last.' UTC') < $cooldownDays * 1.45 * 86400) {
+                    return false; // ~cooldown sessions in calendar days
+                }
+
+                $lastTaken[$event->ticker_id] = $event->day;
+
+                return true;
+            })->values();
+        }
+
         if ($events->isEmpty()) {
-            $this->error("Run #{$runId}: no fired events".($this->option('tier') ? ' at that tier' : '').'.');
+            $this->error("Run #{$runId}: no events pass the filters.");
 
             return self::FAILURE;
         }
 
-        $this->info("Run #{$runId}: ".$events->count().' fired trades'.($this->option('tier') ? " (tier ≥ {$this->option('tier')})" : '').'.');
+        $mode = $this->option('all-candidates') ? 'candidate events (model-first)' : 'fired trades';
+        $this->info("Run #{$runId}: ".$events->count()." {$mode}".($this->option('tier') ? " (tier ≥ {$this->option('tier')})" : '').'.');
 
         [$barsByTicker, $signalCloses] = $this->loadBars($events);
         $mentionSeries = $this->loadMentions($events);
