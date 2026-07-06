@@ -23,7 +23,9 @@ class ExitLab extends Command
 {
     protected $signature = 'pennyhunt:exit-lab
         {--run= : Backtest run id (default: latest done)}
-        {--tier= : Only events with walk-forward confidence >= this (e.g. 0.13)}';
+        {--tier= : Only events with walk-forward confidence >= this (e.g. 0.13)}
+        {--class= : Only this classification (prediction = pre-run <= 15%, reaction = chasing)}
+        {--max-prerun= : Only events with pre_return_3d at/below this fraction}';
 
     protected $description = 'Grid-test exit disciplines over a run\'s fired trades';
 
@@ -61,6 +63,8 @@ class ExitLab extends Command
             ->where('backtest_run_id', $runId)
             ->where('fired', true)
             ->when($this->option('tier') !== null, fn ($q) => $q->where('confidence', '>=', (float) $this->option('tier')))
+            ->when($this->option('class') !== null, fn ($q) => $q->where('classification', $this->option('class')))
+            ->when($this->option('max-prerun') !== null, fn ($q) => $q->where('pre_return_3d', '<=', (float) $this->option('max-prerun')))
             ->orderBy('day')
             ->get(['id', 'ticker_id', 'day', 'entry_date', 'entry', 'atr_pct', 'dollar_volume', 'mentions']);
 
