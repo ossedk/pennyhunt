@@ -184,6 +184,14 @@ Schedule::command('pennyhunt:train-gbm')
     ->onOneServer()
     ->appendOutputTo(storage_path('logs/ml-nightly.log'));
 
+// Weekly aux-head refresh (moonshot + meta, shadow — activation stays a
+// human decision) after the Sunday rolling backtest has finished.
+Schedule::command('pennyhunt:train-aux-heads')
+    ->weeklyOn(7, '05:30')
+    ->name('train-aux-heads-shadow')
+    ->onOneServer()
+    ->appendOutputTo(storage_path('logs/ml-nightly.log'));
+
 /*
 |--------------------------------------------------------------------------
 | Desk: news + LLM market brief

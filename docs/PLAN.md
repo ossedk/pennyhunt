@@ -172,6 +172,40 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
+### Phase F — model-first firing + moonshot head (2026-07-06)
+
+**The recall audit that reframed everything:** among run 35's 26,592
+candidate days, 1,232 went on to +30%/5d — the composite gate fired on
+106 of them (**8.6% recall**); of 319 moonshots (+75%/5d) it caught 38
+(11.9%). The funnel, not the model, was the bottleneck.
+
+**Aux heads (walk-forward, monthly refits):** `pennyhunt:train-aux-heads`
+trains (1) a *moonshot head* — P(best close ≥ +75% in 5 sessions),
+**OOS AUC 0.814** over 23,623 events — and (2) a *meta head* —
+P(phase-E trade nets > 0), AUC 0.544 (weak; parked). Scores persist to
+`backtest_events.moonshot_confidence` / `meta_confidence`; the final
+moonshot model exports to a PHP-scoreable artifact (`signal_models`
+role='moonshot', raw-threshold gated, no isotonic).
+
+**Exit lab in candidate mode (`--all-candidates`, per-ticker cooldown):**
+the winning cell — moonshot p ≥ 0.15 + no-chase (pre-run ≤ 15%) +
+entry ≤ $5 + small-cap regime alive (smallcap_rel_20d ≥ −0.03), traded
+with NO stop and a day-5 time exit: **n=24, +26.2% net/trade, PF 3.62,
+positive in both halves (+36% / +16%)**. The regime throttle is what
+stabilizes it (without: n=33, +15.7%, half-unstable). Notable: the
+10-day hold and collapse exit that won for the composite book LOSE here
+— moonshot candidates resolve fast; day-5 exit is right for this book.
+
+**Live:** `SignalEngine` now gives the active moonshot head a direct
+shot at every hourly candidate the composite threshold rejects, with
+exactly those gates + a 14-day per-ticker cooldown. Model-origin
+signals (`signals.origin = 'model'`) route to a third paper book
+(`moonshot`: no stop, day-5 exit) alongside legacy and phase_e.
+Weekly shadow retrain Sundays 05:30 after the rolling backtest.
+Caveat as always: n=24 — the paper book exists to prove it forward.
+Remaining phase-F workstreams: minute-bar day-0 features (3), squeeze
+fuel: FINRA SI / FTD / borrow (4), halt feed (5).
+
 ### Mention precision round 3: trading slang + SocialFi tokens (2026-07-06)
 
 "SL and TP" posts were counting as $TP mentions — trading slang (TP, SL,
