@@ -334,6 +334,24 @@ class Backtester
             return null;
         }
 
+        // Split-adjustment seam guard: incremental bar syncs leave mixed
+        // price bases around splits (SMCI 10:1 read as a fake +1095% trade).
+        // A >4x or <0.25x overnight jump inside the grading window is a data
+        // break, not a move — the event is ungradeable.
+        for ($o = 0; $o <= 5; $o++) {
+            $prevClose = $bars[$entryIdx + $o - 1]['close'];
+
+            if ($prevClose <= 0) {
+                return null;
+            }
+
+            $gap = $bars[$entryIdx + $o]['open'] / $prevClose;
+
+            if ($gap > 4.0 || $gap < 0.25) {
+                return null;
+            }
+        }
+
         $returnAt = fn (int $offset): float => round(($bars[$entryIdx + $offset]['close'] - $entry) / $entry, 4);
 
         $bestClose = 0.0;

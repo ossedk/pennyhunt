@@ -80,13 +80,27 @@ class ExitLab extends Command
             foreach ($events as $event) {
                 $bars = $this->window($barsByTicker[$event->ticker_id] ?? [], $event->entry_date, 11);
 
-                if ($bars === []) {
+                // Entry comes from the CURRENT bar series (first window bar's
+                // open — the backtester's own definition), not the stored
+                // value: bars get split-adjusted after the run (SRXH's
+                // reverse split turned a stored 0.18 entry into 10.00 bars
+                // and fabricated +181,300%). One price basis, no mixing.
+                if (count($bars) < 3 || $bars[0]['date'] !== $event->entry_date || $bars[0]['open'] <= 0) {
+                    continue;
+                }
+
+                // Data-break guard: a >4x (or <0.25x) overnight jump inside
+                // the window is a split-adjustment seam (SMCI's 10:1 mid-
+                // series), not a trade. Skipping loses the rare true 4x
+                // overnight gap — a price worth paying to never train
+                // discipline choices on fabricated returns.
+                if ($this->hasSeriesBreak($bars)) {
                     continue;
                 }
 
                 $result = $simulator->simulate(
                     $config,
-                    (float) $event->entry,
+                    $bars[0]['open'],
                     $signalCloses[$event->ticker_id][$event->day] ?? 0.0,
                     $event->atr_pct !== null ? min((float) $event->atr_pct, 1.0) : null,
                     $bars,
@@ -190,6 +204,26 @@ class ExitLab extends Command
             });
 
         return [$bars, $signalCloses];
+    }
+
+    /** @param array<int, array{open: float, close: float}> $bars */
+    protected function hasSeriesBreak(array $bars): bool
+    {
+        for ($i = 1; $i < count($bars); $i++) {
+            $prevClose = $bars[$i - 1]['close'];
+
+            if ($prevClose <= 0) {
+                return true;
+            }
+
+            $gap = $bars[$i]['open'] / $prevClose;
+
+            if ($gap > 4.0 || $gap < 0.25) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Bars from entry_date onward, capped. */
