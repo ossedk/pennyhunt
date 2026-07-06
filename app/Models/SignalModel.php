@@ -32,7 +32,7 @@ class SignalModel extends Model
 
     public static function active(): ?self
     {
-        return static::query()->where('is_active', true)->latest('id')->first();
+        return static::query()->where('role', 'confidence')->where('is_active', true)->latest('id')->first();
     }
 
     /**
@@ -40,6 +40,12 @@ class SignalModel extends Model
      *
      * @param  array<string, float>  $features
      */
+    /** The active moonshot head (P(+75%/5d), raw-threshold gated). */
+    public static function activeMoonshot(): ?self
+    {
+        return static::query()->where('role', 'moonshot')->where('is_active', true)->latest('id')->first();
+    }
+
     public function predict(array $features): float
     {
         return ($this->parameters['type'] ?? 'logistic') === 'gbm'
@@ -89,6 +95,12 @@ class SignalModel extends Model
         }
 
         $raw = 1 / (1 + exp(-max(min($z, 30), -30)));
+
+        // Aux heads (moonshot) ship without a calibration layer — gating
+        // uses the raw probability threshold directly.
+        if (($this->parameters['isotonic'] ?? null) === null) {
+            return round($raw, 4);
+        }
 
         return round($this->isotonic($raw), 4);
     }

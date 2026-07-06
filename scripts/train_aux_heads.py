@@ -7,11 +7,15 @@ label_moonshot + label_meta), trains two HistGradientBoosting heads:
   meta head     — P(phase-E trade of this event nets > 0): trade-outcome
                   prediction under the actual exit discipline (meta-labeling).
 
-Writes {out}_aux.csv with id, moonshot_p, meta_p (out-of-sample only).
+Writes {out}_aux.csv with id, moonshot_p, meta_p (out-of-sample only), and
+{out}_moonshot.json — the FINAL moonshot model (trained on everything) in
+the same trees format as train_gbm_model.py, for native PHP scoring at
+fire time (raw probability; live gating uses a raw threshold).
 
 Usage: python train_aux_heads.py events.csv out_prefix
 """
 
+import json
 import sys
 
 import numpy as np
@@ -91,6 +95,58 @@ def main(csv_path: str, out_prefix: str) -> None:
     out = df.dropna(subset=["moonshot_p"])[["id", "moonshot_p", "meta_p"]]
     out.to_csv(f"{out_prefix}_aux.csv", index=False)
     print(f"wrote {len(out)} rows to {out_prefix}_aux.csv")
+
+    # Final moonshot model on all data, exported for PHP evaluation.
+    final = make_model().fit(df[FEATURES], df["label_moonshot"])
+    trees = []
+
+    for (predictor,) in final._predictors:
+        nodes = []
+
+        for node in predictor.nodes:
+            nodes.append({
+                "value": float(node["value"]),
+                "is_leaf": bool(node["is_leaf"]),
+                "feature_idx": int(node["feature_idx"]),
+                "threshold": float(node["num_threshold"]),
+                "left": int(node["left"]),
+                "right": int(node["right"]),
+            })
+
+        trees.append(nodes)
+
+    sample = df.sample(5, random_state=7)
+    parity = [
+        {
+            "features": {f: float(v) for f, v in zip(FEATURES, row)},
+            "raw_p": float(raw),
+            "calibrated_p": float(raw),  # no isotonic layer: raw threshold gating
+        }
+        for row, raw in zip(sample[FEATURES].to_numpy(), final.predict_proba(sample[FEATURES])[:, 1])
+    ]
+
+    artifact = {
+        "type": "gbm",
+        "features": FEATURES,
+        "baseline": float(final._baseline_prediction.ravel()[0]),
+        "trees": trees,
+        "isotonic": None,
+        "parity": parity,
+        "train_from": str(df["day"].min()),
+        "train_to": str(df["day"].max()),
+        "train_events": int(len(df)),
+        "metrics": {
+            "label": "best_close_5d >= 0.75",
+            "oos_events": int(len(scored)),
+            "base_rate": round(float(scored["label_moonshot"].mean()), 4) if len(scored) else None,
+            "auc": round(float(roc_auc_score(scored["label_moonshot"], scored["moonshot_p"])), 4) if len(scored) else None,
+        },
+    }
+
+    with open(f"{out_prefix}_moonshot.json", "w") as fh:
+        json.dump(artifact, fh)
+
+    print(f"wrote moonshot artifact to {out_prefix}_moonshot.json")
 
 
 if __name__ == "__main__":

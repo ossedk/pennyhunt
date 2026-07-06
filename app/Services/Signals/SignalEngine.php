@@ -63,6 +63,7 @@ class SignalEngine
 
         $risingOnAggregators = $this->risingAggregatorSymbols();
         $model = SignalModel::active();
+        $moonshot = config('pennyhunt.moonshot.enabled') ? SignalModel::activeMoonshot() : null;
 
         // Point-in-time dilution / short-flow / regime features for today,
         // same definitions the backtester + trainer use (MarketIntelligence),
@@ -94,6 +95,16 @@ class SignalEngine
             $composite = SignalMath::composite($components);
 
             if ($composite < $threshold) {
+                // Phase F: the composite gate had 8.6% recall on winners —
+                // give the moonshot head a direct shot at every candidate.
+                if ($moonshot !== null) {
+                    $signal = $this->tryMoonshotFire($moonshot, $model, $metric, $intel, $llm, $sector, $today);
+
+                    if ($signal !== null) {
+                        $fired->push($signal);
+                    }
+                }
+
                 continue;
             }
 
@@ -139,6 +150,111 @@ class SignalEngine
         }
 
         return $fired;
+    }
+
+    /**
+     * Model-first fire: the moonshot head (P(+75%/5d)) scores the candidate
+     * directly. Gates mirror the exit lab's only both-halves-positive cell:
+     * raw p >= min_p, no chasing (pre-run cap), tradeable price band,
+     * small-cap regime alive, and a per-ticker refire cooldown.
+     */
+    protected function tryMoonshotFire(
+        SignalModel $moonshot,
+        ?SignalModel $confidenceModel,
+        TickerMetric $metric,
+        MarketIntelligence $intel,
+        LlmAggregates $llm,
+        SectorHeat $sector,
+        string $today,
+    ): ?Signal {
+        $config = config('pennyhunt.moonshot');
+        $ticker = $metric->ticker;
+
+        $recentModelFire = Signal::query()
+            ->where('ticker_id', $ticker->id)
+            ->where('origin', 'model')
+            ->where('fired_at', '>=', now()->subDays((int) $config['cooldown_days']))
+            ->exists();
+
+        if ($recentModelFire) {
+            return null;
+        }
+
+        $market = $this->marketGate($ticker);
+
+        if ($market === null || $market['close'] === null) {
+            return null;
+        }
+
+        // Entry gates from the validated cell.
+        if ($market['close'] > (float) $config['max_entry_price']) {
+            return null;
+        }
+
+        if ($market['pre_return_3d'] !== null && $market['pre_return_3d'] > (float) $config['max_pre_run']) {
+            return null;
+        }
+
+        $intelFeatures = $intel->features($ticker->id, $today);
+
+        if ($intelFeatures['smallcap_rel_20d'] !== null
+            && $intelFeatures['smallcap_rel_20d'] < (float) $config['min_smallcap_rel']) {
+            return null; // dead small-cap regime — stand down
+        }
+
+        $llmFeatures = $llm->features($ticker->id, $today);
+        $sectorFeatures = $sector->features($ticker->id, $today);
+
+        $features = ConfidenceTrainer::features([
+            'zscore' => (float) ($metric->zscore_mentions ?? 0.0),
+            'volume_z' => $market['volume_z'],
+            'sentiment' => $metric->weighted_sentiment !== null ? (float) $metric->weighted_sentiment : null,
+            'unique_authors' => (int) $metric->unique_authors,
+            'mentions' => (int) $metric->mention_count,
+            'pre_return_3d' => $market['pre_return_3d'],
+            'dollar_volume' => $market['dollar_volume'],
+            ...$market,
+            ...$intelFeatures,
+            ...$llmFeatures,
+            ...$sectorFeatures,
+        ]);
+
+        $moonshotP = $moonshot->predict($features);
+
+        if ($moonshotP < (float) $config['min_p']) {
+            return null;
+        }
+
+        $confidence = $confidenceModel?->predict($features);
+
+        $signal = Signal::create([
+            'ticker_id' => $ticker->id,
+            'fired_at' => now(),
+            'origin' => 'model',
+            'composite_score' => round(SignalMath::composite($this->scoreComponents($metric, false)), 4),
+            'confidence' => $confidence,
+            'model_version' => $moonshot->version,
+            'breakdown' => [
+                'moonshot_p' => $moonshotP,
+                'market_gate' => $market,
+                'intel' => $intelFeatures,
+                'llm' => $llmFeatures,
+                'sector' => $sectorFeatures,
+                'inputs' => [
+                    'bucket_start' => $metric->bucket_start->toIso8601String(),
+                    'mention_count' => $metric->mention_count,
+                    'unique_authors' => $metric->unique_authors,
+                    'weighted_sentiment' => $metric->weighted_sentiment,
+                    'zscore_mentions' => $metric->zscore_mentions,
+                ],
+            ],
+            'state' => 'new',
+        ]);
+
+        SignalFired::dispatch($signal);
+        GenerateSignalBrief::dispatch($signal->id);
+
+        return $signal;
     }
 
     /**

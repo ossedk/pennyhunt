@@ -224,6 +224,27 @@ return [
         'leaderboard_size' => 25,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Moonshot model-first firing (Phase F)
+    |--------------------------------------------------------------------------
+    | Fires signals directly from the moonshot head (P(+75%/5d)) over ALL
+    | hourly candidates — bypassing the composite threshold that had 8.6%
+    | recall on winners. Gates mirror the exit lab's only both-halves-
+    | positive cell (run 35: n=24, +26% net/trade, PF 3.6): raw p >= 0.15,
+    | no chasing, tradeable price band, small-cap regime alive. Trades go
+    | to the 'moonshot' paper book (no stop, day-5 time exit).
+    */
+    'moonshot' => [
+        'enabled' => (bool) env('PENNYHUNT_MOONSHOT', true),
+        'min_p' => (float) env('PENNYHUNT_MOONSHOT_MIN_P', 0.15),
+        'max_pre_run' => 0.15,
+        'max_entry_price' => 5.0,
+        'min_smallcap_rel' => -0.03,
+        // Per-ticker refire cooldown (the lab used a 10-session cooldown).
+        'cooldown_days' => 14,
+    ],
+
     'signals' => [
         // Composite score threshold above which a signal is fired.
         'fire_threshold' => (float) env('PENNYHUNT_SIGNAL_THRESHOLD', 0.65),

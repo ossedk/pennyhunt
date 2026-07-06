@@ -113,7 +113,7 @@ class TrainGbmModel extends Command
 
         DB::transaction(function () use ($run, $artifact, $metrics, &$model): void {
             if ($this->option('activate')) {
-                SignalModel::query()->update(['is_active' => false]);
+                SignalModel::query()->where('role', 'confidence')->update(['is_active' => false]);
             }
 
             $model = SignalModel::create([

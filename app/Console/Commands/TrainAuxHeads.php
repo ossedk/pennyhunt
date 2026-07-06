@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\BacktestEvent;
 use App\Models\BacktestRun;
+use App\Models\SignalModel;
 use App\Services\Backtesting\ExitSimulator;
 use App\Services\Backtesting\FrictionModel;
 use App\Services\Ml\ConfidenceTrainer;
@@ -26,7 +27,8 @@ use Illuminate\Support\Facades\Process;
 class TrainAuxHeads extends Command
 {
     protected $signature = 'pennyhunt:train-aux-heads
-        {--run= : Backtest run id (default: latest done run)}';
+        {--run= : Backtest run id (default: latest done run)}
+        {--activate : Activate the imported moonshot head for live model-first firing}';
 
     protected $description = 'Train walk-forward moonshot + meta heads and store per-event scores';
 
@@ -86,6 +88,57 @@ class TrainAuxHeads extends Command
 
         fclose($fh);
         $this->info("{$updates} events updated with aux head scores.");
+
+        return $this->importMoonshotArtifact($run, "{$outPrefix}_moonshot.json");
+    }
+
+    /** Parity-checked import of the final moonshot model for live PHP scoring. */
+    protected function importMoonshotArtifact(BacktestRun $run, string $path): int
+    {
+        if (! is_file($path)) {
+            $this->warn('No moonshot artifact produced — live gating unchanged.');
+
+            return self::SUCCESS;
+        }
+
+        $artifact = json_decode((string) file_get_contents($path), true);
+
+        if (! is_array($artifact) || ($artifact['type'] ?? null) !== 'gbm') {
+            $this->error('Invalid moonshot artifact.');
+
+            return self::FAILURE;
+        }
+
+        $model = new SignalModel(['parameters' => $artifact]);
+
+        foreach ($artifact['parity'] as $i => $vector) {
+            if (abs($model->predict($vector['features']) - $vector['raw_p']) > 0.001) {
+                $this->error("Moonshot parity check {$i} FAILED — not imported.");
+
+                return self::FAILURE;
+            }
+        }
+
+        DB::transaction(function () use ($run, $artifact): void {
+            if ($this->option('activate')) {
+                SignalModel::query()->where('role', 'moonshot')->update(['is_active' => false]);
+            }
+
+            SignalModel::create([
+                'version' => 'moonshot-v'.now()->format('Y-m-d').'-run'.$run->id.'.'.(SignalModel::where('role', 'moonshot')->count() + 1),
+                'role' => 'moonshot',
+                'backtest_run_id' => $run->id,
+                'train_from' => $artifact['train_from'],
+                'train_to' => $artifact['train_to'],
+                'train_events' => $artifact['train_events'],
+                'parameters' => $artifact,
+                'metrics' => $artifact['metrics'],
+                'is_active' => (bool) $this->option('activate'),
+            ]);
+        });
+
+        $this->info('Moonshot head imported'.($this->option('activate') ? ' and ACTIVATED' : ' (inactive — pass --activate)')
+            .sprintf(' — OOS AUC %.3f over %d events.', $artifact['metrics']['auc'] ?? 0, $artifact['metrics']['oos_events'] ?? 0));
 
         return self::SUCCESS;
     }

@@ -97,6 +97,27 @@ it('phase-e book carries no price stop and survives drops that stop the legacy b
         ->and($phaseE->stop_price)->toBeNull();
 });
 
+it('routes model-origin signals to the moonshot book without a tier gate', function () {
+    tradeModel();
+    $signal = tradeSignal(0.01, '2026-06-01 15:00:00'); // far below tier
+    $signal->update(['origin' => 'model']);
+
+    $trade = app(TradeEngine::class)->createForSignal($signal);
+
+    expect($trade)->not->toBeNull()
+        ->and($trade->book)->toBe('moonshot')
+        ->and(SignalTrade::count())->toBe(1);
+
+    // Fills without a stop; 5-session hold applies.
+    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.05, 0.95, 1.00);
+    tradeBar($signal->ticker_id, '2026-06-02', 1.02, 1.06, 0.98, 1.04);
+
+    app(TradeEngine::class)->sync();
+
+    expect($trade->refresh()->status)->toBe('open')
+        ->and($trade->stop_price)->toBeNull();
+});
+
 it('phase-e book exits when the crowd collapses', function () {
     tradeModel();
     $signal = tradeSignal(0.20, '2026-06-01 15:00:00');

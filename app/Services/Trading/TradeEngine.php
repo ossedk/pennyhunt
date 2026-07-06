@@ -35,6 +35,25 @@ class TradeEngine
      */
     public function createForSignal(Signal $signal): ?SignalTrade
     {
+        // Model-origin (moonshot) signals passed their own gate — they get
+        // the moonshot paper book unconditionally, no confidence tier.
+        if ($signal->origin === 'model') {
+            $trade = SignalTrade::firstOrCreate(
+                ['signal_id' => $signal->id, 'book' => 'moonshot'],
+                [
+                    'ticker_id' => $signal->ticker_id,
+                    'status' => 'pending_entry',
+                    'tier' => 'moonshot',
+                    'confidence_at_entry' => $signal->confidence,
+                    'model_version' => $signal->model_version,
+                ],
+            );
+
+            TradeUpdated::dispatch($trade, 'created');
+
+            return $trade;
+        }
+
         $model = SignalModel::active();
         $threshold = $model?->metrics['trade_tier']['calibrated_p'] ?? null;
 
@@ -115,6 +134,7 @@ class TradeEngine
         // Phase-E book: NO-CHASE veto — the lab's decisive finding is that
         // losses concentrate in entries after the move already started.
         // Skip when the stock ran > 15% over the 3 sessions pre-fire.
+        // (Moonshot-book signals were gated on pre-run at fire time.)
         if ($trade->book === 'phase_e') {
             $preRun = data_get($trade->signal->breakdown, 'market_gate.pre_return_3d');
 
@@ -130,10 +150,10 @@ class TradeEngine
             'status' => 'open',
             'entry_date' => $entryBar->bucket_start->toDateString(),
             'entry_price' => round($entry, 4),
-            // Phase-E carries NO price stop (every stop flavor destroyed
-            // value in the lab); the mention-collapse exit and the 10-day
-            // cap bound the risk instead.
-            'stop_price' => $trade->book === 'phase_e' ? null : round($entry * (1 - SignalTrade::STOP_FRACTION), 4),
+            // Phase-E and moonshot books carry NO price stop (every stop
+            // flavor destroyed value in the lab); collapse exits / time
+            // caps bound the risk instead.
+            'stop_price' => $trade->book === 'legacy' ? round($entry * (1 - SignalTrade::STOP_FRACTION), 4) : null,
         ]);
 
         TradeUpdated::dispatch($trade, 'opened');
@@ -152,6 +172,8 @@ class TradeEngine
      */
     protected function walkExits(SignalTrade $trade): void
     {
+        // moonshot: 5-session hold, no stop, no collapse exit (the lab's
+        // +26%/trade cell); phase_e: 10 sessions + collapse; legacy: 5 + stop.
         $holdDays = $trade->book === 'phase_e' ? SignalTrade::PHASE_E_HOLD_DAYS : SignalTrade::HOLD_DAYS;
 
         $bars = MarketBar::query()
