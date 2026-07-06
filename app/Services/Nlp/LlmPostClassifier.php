@@ -123,8 +123,15 @@ PROMPT;
                     ? ', market cap $'.number_format((float) $ticker->market_cap)
                     : '';
 
+                // Unlisted shells with no market data are prime crypto-
+                // collision targets — tell the model to lean off_topic.
+                $suffix = $ticker->exchange === null && $ticker->market_cap === null
+                    ? ' [no exchange listing, no market data — crypto tokens commonly use this symbol; lean off_topic unless the post clearly discusses this company]'
+                    : '';
+
                 return '$'.$ticker->symbol.' = '.($ticker->name ?? 'unknown')
-                    .($ticker->exchange ? ' ('.$ticker->exchange.$cap.')' : $cap);
+                    .($ticker->exchange ? ' ('.$ticker->exchange.$cap.')' : $cap)
+                    .$suffix;
             });
 
         $context = $tickers->isNotEmpty()
