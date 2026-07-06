@@ -172,6 +172,56 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
+### Phase E (NEXT) — From predictive edge to tradable P&L (planned 2026-07-06)
+
+**Where we stand.** The model finds winners: run 35 (24 months, walk-forward,
+no look-ahead) shows 15.2% hit rate vs 4.3% base (3.5x), top-decile 13.0%
+realized vs 4.7% base, +5.0% Brier edge — with insider features still absent
+and LLM coverage at 46%. But the *simulated book loses money*: avg exit
++1.9%/trade, −3.1% net of 5% friction, profit factor 0.72. The diagnosis is
+in the exits, not the entries: 67% of trades stop out at −10.3% avg — yet
+those same trades peaked +18.5% during the hold; winners peak +130% but
+realize only +46.5% (84 points of giveback from the forced day-5 exit).
+A fixed −10% stop is *inside normal daily range* for these names, and the
+5-session hard exit sells exactly when winners are running.
+
+**Tradeoff analysis.** (1) *Exit sophistication vs overfitting*: a grid
+search over exit rules on the same 24 months risks curve-fitting; guard by
+walk-forward splits and by preferring rules with a physical rationale
+(ATR-scaled stops track the instrument's own noise floor) over arbitrary
+percentages. (2) *Stops vs crowd signals*: we uniquely have live mention
+data — "exit on mention collapse" uses our proprietary signal as a
+regime-aware exit, but it must be tested as-of, not with today's cleaned
+data. (3) *Entry at next open vs limit entries*: next-open buys every gap
+(paying the move); limit-at-signal-close+X% misses runners but improves
+average entry — measure fill-rate-adjusted expectancy, not per-fill returns.
+(4) *Flat 5% friction vs per-ticker*: flat friction overtaxes liquid movers
+and undertaxes illiquid ones; model friction from dollar volume and price
+band. (5) *Selectivity vs sample size*: trading only the GBM top tier cuts
+trade count ~4x — better expectancy per trade but slower statistical
+validation; run both books in parallel (paper) to keep the sample growing.
+
+**Workstreams, in order:**
+1. **Exit engineering** — extend `Backtester::simulateExit` with:
+   ATR-scaled stops (k×ATR, k∈{1.5, 2, 2.5}), partial take at +30% (sell
+   half, trail the rest), trailing stop (close below m×ATR from peak),
+   mention-collapse exit (daily mentions < 25% of fire-day, as-of), and
+   holding-window extension (5 → 10 sessions when trailing). Grid-run on
+   run-35 params, walk-forward validated, report per-tier.
+2. **Entry engineering** — max-gap veto (skip entries opening >X% above
+   signal close), limit-entry simulation with honest fill logic, and
+   (after 1–2 proves out) Polygon minute bars for first-30-minute VWAP
+   entries on trade-tier signals only.
+3. **Friction model** — per-ticker round-trip cost from price band ×
+   dollar-volume decile, replacing flat 5%; recalibrate profit factor.
+4. **Tier-gated paper books** — run the improved discipline live as a
+   second `signal_trades` book alongside the current one, so real-time
+   evidence accumulates while backtests iterate.
+5. **Data compounding (running)** — insider backfill completes today;
+   LLM coverage → ~100% within days; weekly rolling backtest keeps the
+   training window moving; add a monthly permutation-importance report to
+   prune dead features and confirm the phase-D blocks earn their keep.
+
 ### Phase 0 — Foundation (week 1) ✅ DONE 2026-07-02
 - `laravel new pennyhunt --react` (Laravel 13, React 19, Inertia, Tailwind 4, shadcn/ui), dark theme, left sidebar shell, auth.
 - Postgres, Redis, Horizon, Reverb, Pulse wired up. (Sentry + Docker compose deferred; local brew services in use.)
