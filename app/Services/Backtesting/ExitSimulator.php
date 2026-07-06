@@ -19,6 +19,8 @@ namespace App\Services\Backtesting;
  *  - stop_loss: fixed fractional stop (legacy 0.10). Ignored when
  *    atr_stop_mult is set.
  *  - atr_stop_mult: stop distance = k × ATR$ (clamped 5%..25% of entry).
+ *  - stop_on_close: stop triggers on the CLOSE only (fill at that close) —
+ *    immune to intraday shakeouts, pays for it via slippage past the level.
  *  - take_profit: full take-profit fraction (legacy behavior).
  *  - partial_take_at: sell HALF at this gain, move stop to breakeven,
  *    trail the remainder.
@@ -100,10 +102,17 @@ class ExitSimulator
             }
 
             // Stop first (pessimistic when a bar straddles both levels).
-            if ($stopPrice !== null && ($open <= $stopPrice || $bar['low'] <= $stopPrice)) {
+            if ($stopPrice !== null && ! ($config['stop_on_close'] ?? false)
+                && ($open <= $stopPrice || $bar['low'] <= $stopPrice)) {
                 $fill = min($open, $stopPrice);
 
                 return ['skipped' => false, 'return' => $blend(($fill - $entry) / $entry), 'reason' => 'stop', 'day' => $o, 'date' => $bar['date']];
+            }
+
+            // Close-based stop: only a CLOSE through the level exits (at
+            // that close) — intraday wicks don't shake us out.
+            if ($stopPrice !== null && ($config['stop_on_close'] ?? false) && $bar['close'] <= $stopPrice) {
+                return ['skipped' => false, 'return' => $blend(($bar['close'] - $entry) / $entry), 'reason' => 'stop', 'day' => $o, 'date' => $bar['date']];
             }
 
             // Full take-profit (legacy behavior).

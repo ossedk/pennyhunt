@@ -32,15 +32,20 @@ class ExitLab extends Command
     {
         return [
             'legacy (10% stop, 5d)' => ['stop_loss' => 0.10, 'max_hold' => 5],
+            'NO STOP, 5d hold' => ['max_hold' => 5],
+            'NO STOP, 10d hold' => ['max_hold' => 10],
             'atr 1.5x, 5d' => ['atr_stop_mult' => 1.5, 'max_hold' => 5],
             'atr 2.0x, 5d' => ['atr_stop_mult' => 2.0, 'max_hold' => 5],
-            'atr 2.5x, 5d' => ['atr_stop_mult' => 2.5, 'max_hold' => 5],
-            'atr 2x, 10d' => ['atr_stop_mult' => 2.0, 'max_hold' => 10],
+            'close-stop 15%, 5d' => ['stop_loss' => 0.15, 'stop_on_close' => true, 'max_hold' => 5],
+            'close-stop atr 2x, 5d' => ['atr_stop_mult' => 2.0, 'stop_on_close' => true, 'max_hold' => 5],
             'atr 2x + trail 2.5x, 10d' => ['atr_stop_mult' => 2.0, 'trail_atr_mult' => 2.5, 'max_hold' => 10],
             'atr 2x + partial@30 + trail' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'max_hold' => 10],
+            'no stop + partial@30 + trail' => ['partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'max_hold' => 10],
             'atr 2x + collapse 25%' => ['atr_stop_mult' => 2.0, 'mention_collapse_frac' => 0.25, 'max_hold' => 10],
+            'no stop + collapse 25%, 10d' => ['mention_collapse_frac' => 0.25, 'max_hold' => 10],
             'full stack' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'mention_collapse_frac' => 0.25, 'max_hold' => 10],
             'full + gap veto 15%' => ['atr_stop_mult' => 2.0, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'mention_collapse_frac' => 0.25, 'max_entry_gap' => 0.15, 'max_hold' => 10],
+            'closestop2x+partial+collapse' => ['atr_stop_mult' => 2.0, 'stop_on_close' => true, 'partial_take_at' => 0.30, 'trail_atr_mult' => 2.5, 'mention_collapse_frac' => 0.25, 'max_entry_gap' => 0.15, 'max_hold' => 10],
         ];
     }
 
