@@ -1,5 +1,6 @@
 <?php
 
+use App\Jobs\Backtesting\RunBacktest;
 use App\Jobs\Ingestion\PollApeWisdom;
 use App\Jobs\Ingestion\PollRedditSubreddit;
 use App\Jobs\Ingestion\PollRedditViaApify;
@@ -17,6 +18,7 @@ use App\Jobs\Signals\ComputeSignals;
 use App\Jobs\Signals\GradeSignals;
 use App\Jobs\Trading\ManageSignalTrades;
 use App\Jobs\Trading\RefreshOpenTradeQuotes;
+use App\Models\BacktestRun;
 use App\Models\Source;
 use Illuminate\Support\Facades\Schedule;
 
@@ -143,6 +145,32 @@ Schedule::command('pennyhunt:sync-insider-trades --months=3 --min-mentions=2 --s
 | decision (pennyhunt:train-gbm --activate) once the metrics justify it.
 | 07:00: after bars (05:00), grading (06:00) and track records (06:30).
 */
+
+// Weekly rolling-window backtest (24 months ending yesterday): the nightly
+// retrain trains on "latest done run", so without this the training set
+// would be frozen at whenever someone last ran a backtest by hand. This
+// keeps ~5 new sessions/week flowing into training automatically.
+Schedule::call(function (): void {
+    $run = BacktestRun::create([
+        'status' => 'pending',
+        'params' => [
+            'from' => now()->subMonths(24)->toDateString(),
+            'to' => now()->subDay()->toDateString(),
+            'threshold' => 0.65,
+            'min_daily_mentions' => 3,
+            'hit_threshold' => 0.3,
+            'friction' => 0.05,
+            'min_volume_z' => 2,
+            'max_entry_price' => 5,
+            'stop_loss' => 0.1,
+            'baseline_days' => 30,
+            'cooldown_days' => 3,
+            'note' => 'weekly rolling training window',
+        ],
+    ]);
+
+    RunBacktest::dispatch($run->id);
+})->weeklyOn(7, '02:00')->name('weekly-rolling-backtest')->onOneServer();
 
 Schedule::command('pennyhunt:backfill-llm-features')
     ->dailyAt('07:00')

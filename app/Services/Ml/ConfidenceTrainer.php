@@ -103,9 +103,11 @@ class ConfidenceTrainer
             // Phase D. Null defaults are the neutral state, not zero-is-bad:
             // rvol 1.0 = normal volume; dist_52w_high -0.5 = mid-range (0
             // would falsely claim "at the 52w high").
-            'rvol' => isset($in['rvol']) && $in['rvol'] !== '' ? (float) $in['rvol'] : 1.0,
-            'atr_pct' => (float) ($in['atr_pct'] ?? 0.0),
-            'range_expansion' => isset($in['range_expansion']) && $in['range_expansion'] !== '' ? (float) $in['range_expansion'] : 1.0,
+            // Clamps guard against glitch bars on sub-cent tickers (ATR
+            // several times price, RVOL in the thousands) polluting splits.
+            'rvol' => isset($in['rvol']) && $in['rvol'] !== '' ? min((float) $in['rvol'], 100.0) : 1.0,
+            'atr_pct' => min((float) ($in['atr_pct'] ?? 0.0), 1.0),
+            'range_expansion' => isset($in['range_expansion']) && $in['range_expansion'] !== '' ? min((float) $in['range_expansion'], 20.0) : 1.0,
             'dist_52w_high' => isset($in['dist_52w_high']) && $in['dist_52w_high'] !== '' ? (float) $in['dist_52w_high'] : -0.5,
             'up_streak' => (float) ($in['up_streak'] ?? 0),
             'gap_open' => (float) ($in['gap_open'] ?? 0.0),
