@@ -20,24 +20,22 @@ use Illuminate\Support\Facades\Http;
 class SqueezeFuelClients
 {
     /**
-     * Finds the actual settlement date for a half-month by probing EQUAL
-     * filters (settlementDate is a partition key — ranges are rejected).
-     * FINRA settles mid-month (~15th) and at month-end, shifted around
-     * weekends/holidays.
+     * Finds the actual settlement date for a half-month by probing the
+     * FINRA CDN (bi-weekly files exist only for real settlement dates,
+     * which shift around weekends/holidays).
      *
      * @param  list<string>  $candidates  Y-m-d dates, most likely first
      */
     public function finraProbeSettlementDate(array $candidates): ?string
     {
         foreach ($candidates as $date) {
-            $response = Http::timeout(30)
-                ->withHeaders(['Content-Type' => 'application/json'])
-                ->post('https://api.finra.org/data/group/otcMarket/name/EquityShortInterest', [
-                    'compareFilters' => [['compareType' => 'EQUAL', 'fieldName' => 'settlementDate', 'fieldValue' => $date]],
-                    'limit' => 1,
-                ]);
+            $compact = str_replace('-', '', $date);
 
-            if ($response->status() === 200 && trim($response->body()) !== '' && substr_count($response->body(), "\n") >= 1) {
+            $response = Http::timeout(20)
+                ->retry(2, 1000, throw: false)
+                ->head("https://cdn.finra.org/equity/otcmarket/biweekly/shrt{$compact}.csv");
+
+            if ($response->successful()) {
                 return $date;
             }
         }
@@ -46,65 +44,57 @@ class SqueezeFuelClients
     }
 
     /**
-     * Short interest rows for one exact settlement date (CSV response,
-     * paginated). Columns: issueSymbolIdentifier, settlementDate, ...,
-     * currentShortShareNumber, ..., daysToCoverNumber.
+     * Short interest rows for one settlement date from the FINRA CDN
+     * bi-weekly file (pipe-delimited: symbolCode|...|
+     * currentShortPositionQuantity|...|daysToCoverQuantity|...).
      *
      * @return array<int, array{symbol: string, settlement_date: string, shares_short: int, days_to_cover: ?float}>
      */
     public function finraShortInterest(string $settlementDate): array
     {
+        $compact = str_replace('-', '', $settlementDate);
+
+        $response = Http::timeout(120)
+            ->retry(2, 2000, throw: false)
+            ->get("https://cdn.finra.org/equity/otcmarket/biweekly/shrt{$compact}.csv");
+
+        if (! $response->successful()) {
+            return [];
+        }
+
+        $lines = explode("\n", trim($response->body()));
+        $header = explode('|', array_shift($lines) ?? '');
+        $idx = array_flip($header);
+
+        if (! isset($idx['symbolCode'], $idx['currentShortPositionQuantity'])) {
+            return [];
+        }
+
         $rows = [];
-        $offset = 0;
 
-        do {
-            $response = Http::timeout(120)
-                ->withHeaders(['Content-Type' => 'application/json'])
-                ->post('https://api.finra.org/data/group/otcMarket/name/EquityShortInterest', [
-                    'compareFilters' => [['compareType' => 'EQUAL', 'fieldName' => 'settlementDate', 'fieldValue' => $settlementDate]],
-                    'limit' => 10000,
-                    'offset' => $offset,
-                ]);
-
-            if ($response->status() !== 200) {
-                break;
+        foreach ($lines as $line) {
+            if (trim($line) === '') {
+                continue;
             }
 
-            $lines = explode("\n", trim($response->body()));
-            $header = str_getcsv(array_shift($lines) ?? '', escape: '\\');
-            $idx = array_flip($header);
+            $parts = explode('|', $line);
+            $symbol = strtoupper(trim($parts[$idx['symbolCode']] ?? ''));
+            $shares = (int) ($parts[$idx['currentShortPositionQuantity']] ?? 0);
 
-            if (! isset($idx['issueSymbolIdentifier'], $idx['currentShortShareNumber'])) {
-                break;
+            if ($symbol === '' || $shares <= 0) {
+                continue;
             }
 
-            foreach ($lines as $line) {
-                if (trim($line) === '') {
-                    continue;
-                }
+            $dtc = $parts[$idx['daysToCoverQuantity']] ?? null;
 
-                $parts = str_getcsv($line, escape: '\\');
-                $symbol = strtoupper(trim($parts[$idx['issueSymbolIdentifier']] ?? ''));
-                $shares = (int) ($parts[$idx['currentShortShareNumber']] ?? 0);
-
-                if ($symbol === '' || $shares <= 0) {
-                    continue;
-                }
-
-                $dtc = $parts[$idx['daysToCoverNumber']] ?? null;
-
-                $rows[] = [
-                    'symbol' => $symbol,
-                    'settlement_date' => $settlementDate,
-                    'shares_short' => $shares,
-                    // 999.99 is FINRA's "not calculable" sentinel.
-                    'days_to_cover' => is_numeric($dtc) && (float) $dtc < 999.0 ? (float) $dtc : null,
-                ];
-            }
-
-            $count = count($lines);
-            $offset += 10000;
-        } while ($count >= 10000 && $offset < 500_000);
+            $rows[] = [
+                'symbol' => $symbol,
+                'settlement_date' => $settlementDate,
+                'shares_short' => $shares,
+                // 999.99 is FINRA's "not calculable" sentinel.
+                'days_to_cover' => is_numeric($dtc) && (float) $dtc < 999.0 ? (float) $dtc : null,
+            ];
+        }
 
         return $rows;
     }
