@@ -61,6 +61,30 @@ class PolygonClient
     }
 
     /**
+     * Minute aggregates for one ticker-day (regular + extended session).
+     *
+     * @return array<int, array{t: int, o: float, h: float, l: float, c: float, v: float}>
+     */
+    public function minuteBars(string $symbol, string $date): array
+    {
+        $response = $this->get(sprintf(
+            '/v2/aggs/ticker/%s/range/1/minute/%s/%s',
+            rawurlencode(strtoupper($symbol)),
+            $date,
+            $date,
+        ), ['adjusted' => 'true', 'sort' => 'asc', 'limit' => 5000]);
+
+        return array_map(fn (array $bar): array => [
+            't' => (int) $bar['t'],
+            'o' => (float) $bar['o'],
+            'h' => (float) $bar['h'],
+            'l' => (float) $bar['l'],
+            'c' => (float) $bar['c'],
+            'v' => (float) $bar['v'],
+        ], $response?->json('results') ?? []);
+    }
+
+    /**
      * Historical news window for backfills (max 1000 per call).
      *
      * @return array<int, array<string, mixed>>

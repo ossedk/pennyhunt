@@ -58,6 +58,7 @@ class Backtester
         'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
         'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
         'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
+        'si_days_to_cover', 'si_pct_change', 'ftd_log', 'borrow_fee', 'halted_5d',
         'entry_date', 'entry', 'return_1d', 'return_3d', 'return_5d',
         'best_close_5d', 'exit_return', 'exit_reason', 'exit_day', 'exit_date',
         'hit', 'classification',

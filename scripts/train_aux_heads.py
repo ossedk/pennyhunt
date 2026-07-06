@@ -34,6 +34,8 @@ FEATURES = [
     "rvol", "atr_pct", "range_expansion", "dist_52w_high", "up_streak", "gap_open",
     "sector_heat", "sector_mention_z", "smallcap_rel_20d", "xbi_ret_5d",
     "insider_buys_90d", "insider_net_value_90d", "news_catalyst_7d", "news_offering_7d",
+    "or_return_30m", "vwap_dist_30m", "or_vol_share", "gap_faded",
+    "si_days_to_cover", "si_pct_change", "ftd_log", "borrow_fee", "halted_5d",
 ]
 MIN_TRAIN = 500
 

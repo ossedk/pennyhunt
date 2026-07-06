@@ -4,6 +4,7 @@ use App\Jobs\Backtesting\RunBacktest;
 use App\Jobs\Ingestion\PollApeWisdom;
 use App\Jobs\Ingestion\PollRedditSubreddit;
 use App\Jobs\Ingestion\PollRedditViaApify;
+use App\Jobs\Ingestion\PollTradeHalts;
 use App\Jobs\Ingestion\PollTradestie;
 use App\Jobs\Ingestion\PollTwitterViaApify;
 use App\Jobs\Ingestion\SyncTickerUniverse;
@@ -132,6 +133,22 @@ Schedule::command('pennyhunt:sync-sec-filings --months=3 --min-mentions=2 --skip
 Schedule::command('pennyhunt:sync-insider-trades --months=3 --min-mentions=2 --skip-synced-days=7')
     ->dailyAt('05:45')
     ->name('sync-insider-trades')
+    ->onOneServer();
+
+// Squeeze fuel: FINRA bi-monthly short interest + SEC FTDs + iBorrowDesk
+// borrow — the supply-side data behind moonshots. Nightly delta.
+Schedule::command('pennyhunt:sync-squeeze-fuel')
+    ->dailyAt('05:50')
+    ->name('sync-squeeze-fuel')
+    ->onOneServer();
+
+// LULD/regulatory trade halts (NASDAQ Trader RSS) — every 10 minutes
+// through pre-market → after-hours (UTC ≈ 08:00-01:00 ET window).
+Schedule::job(new PollTradeHalts)
+    ->everyTenMinutes()
+    ->weekdays()
+    ->between('12:00', '22:00')
+    ->name('poll-trade-halts')
     ->onOneServer();
 
 /*

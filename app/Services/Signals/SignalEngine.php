@@ -10,10 +10,12 @@ use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\Ticker;
 use App\Models\TickerMetric;
+use App\Services\Features\Day0Features;
 use App\Services\Features\LlmAggregates;
 use App\Services\Features\MarketIntelligence;
 use App\Services\Features\SectorHeat;
 use App\Services\Features\TechnicalFeatures;
+use App\Services\MarketData\PolygonClient;
 use App\Services\MarketData\YahooMarketData;
 use App\Services\Ml\ConfidenceTrainer;
 use Carbon\CarbonImmutable;
@@ -204,6 +206,7 @@ class SignalEngine
 
         $llmFeatures = $llm->features($ticker->id, $today);
         $sectorFeatures = $sector->features($ticker->id, $today);
+        $day0 = $this->day0Features($ticker, $today);
 
         $features = ConfidenceTrainer::features([
             'zscore' => (float) ($metric->zscore_mentions ?? 0.0),
@@ -217,6 +220,7 @@ class SignalEngine
             ...$intelFeatures,
             ...$llmFeatures,
             ...$sectorFeatures,
+            ...$day0,
         ]);
 
         $moonshotP = $moonshot->predict($features);
@@ -240,6 +244,7 @@ class SignalEngine
                 'intel' => $intelFeatures,
                 'llm' => $llmFeatures,
                 'sector' => $sectorFeatures,
+                'day0' => $day0,
                 'inputs' => [
                     'bucket_start' => $metric->bucket_start->toIso8601String(),
                     'mention_count' => $metric->mention_count,
@@ -255,6 +260,38 @@ class SignalEngine
         GenerateSignalBrief::dispatch($signal->id);
 
         return $signal;
+    }
+
+    /**
+     * Live day-0 microstructure for a moonshot candidate: today's minute
+     * bars from Polygon (15-min delayed on Starter — fine once past 10:15
+     * ET). Nulls before the opening range completes or without a key.
+     *
+     * @return array{or_return_30m: ?float, vwap_dist_30m: ?float, or_vol_share: ?float, gap_faded: ?bool}
+     */
+    protected function day0Features(Ticker $ticker, string $today): array
+    {
+        $empty = array_fill_keys(Day0Features::FEATURE_KEYS, null);
+
+        $polygon = app(PolygonClient::class);
+
+        if (! $polygon->enabled()) {
+            return $empty;
+        }
+
+        $daily = MarketBar::query()
+            ->where('ticker_id', $ticker->id)
+            ->where('interval', '1d')
+            ->where('bucket_start', '<', $today)
+            ->orderByDesc('bucket_start')
+            ->limit(20)
+            ->get(['close', 'volume']);
+
+        return Day0Features::compute(
+            $polygon->minuteBars($ticker->symbol, $today),
+            $daily->first() !== null ? (float) $daily->first()->close : null,
+            $daily->count() >= 5 ? (float) $daily->avg('volume') : null,
+        );
     }
 
     /**

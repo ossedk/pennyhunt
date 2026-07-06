@@ -41,6 +41,10 @@ class ConfidenceTrainer
         'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
         'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
         'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
+        // Phase F: day-0 microstructure (Day0Features, Polygon minute bars)
+        // + squeeze fuel (FINRA SI, SEC FTDs, iBorrowDesk, halts).
+        'or_return_30m', 'vwap_dist_30m', 'or_vol_share', 'gap_faded',
+        'si_days_to_cover', 'si_pct_change', 'ftd_log', 'borrow_fee', 'halted_5d',
     ];
 
     protected const MIN_TRAIN_EVENTS = 300;
@@ -56,6 +60,8 @@ class ConfidenceTrainer
         'rvol', 'atr_pct', 'range_expansion', 'dist_52w_high', 'up_streak', 'gap_open',
         'sector_heat', 'sector_mention_z', 'smallcap_rel_20d', 'xbi_ret_5d',
         'insider_buys_90d', 'insider_net_value_90d', 'news_catalyst_7d', 'news_offering_7d',
+        'or_return_30m', 'vwap_dist_30m', 'or_vol_share', 'gap_faded',
+        'si_days_to_cover', 'si_pct_change', 'ftd_log', 'borrow_fee', 'halted_5d',
     ];
 
     /**
@@ -119,6 +125,17 @@ class ConfidenceTrainer
             'insider_net_value_90d' => (float) ($in['insider_net_value_90d'] ?? 0.0),
             'news_catalyst_7d' => empty($in['news_catalyst_7d']) ? 0.0 : 1.0,
             'news_offering_7d' => empty($in['news_offering_7d']) ? 0.0 : 1.0,
+            // Phase F. Day-0 nulls = "no minute data" (sparse coverage by
+            // design — only tradeable-pool events get backfilled).
+            'or_return_30m' => (float) ($in['or_return_30m'] ?? 0.0),
+            'vwap_dist_30m' => (float) ($in['vwap_dist_30m'] ?? 0.0),
+            'or_vol_share' => (float) ($in['or_vol_share'] ?? 0.0),
+            'gap_faded' => empty($in['gap_faded']) ? 0.0 : 1.0,
+            'si_days_to_cover' => min((float) ($in['si_days_to_cover'] ?? 0.0), 100.0),
+            'si_pct_change' => max(min((float) ($in['si_pct_change'] ?? 0.0), 10.0), -1.0),
+            'ftd_log' => (float) ($in['ftd_log'] ?? 0.0),
+            'borrow_fee' => min((float) ($in['borrow_fee'] ?? 0.0), 500.0),
+            'halted_5d' => (float) ($in['halted_5d'] ?? 0),
         ];
     }
 

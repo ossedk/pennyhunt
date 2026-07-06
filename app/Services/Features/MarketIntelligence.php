@@ -82,7 +82,26 @@ class MarketIntelligence
         'smallcap_rel_20d', 'xbi_ret_5d',
         'insider_buys_90d', 'insider_net_value_90d',
         'news_catalyst_7d', 'news_offering_7d',
+        'si_days_to_cover', 'si_pct_change', 'ftd_log', 'borrow_fee', 'halted_5d',
     ];
+
+    /** Bi-monthly SI publishes ~9 business days after settlement. */
+    protected const SI_VISIBILITY_LAG_DAYS = 13;
+
+    /** SEC FTD half-month files land 2-4 weeks after settlement. */
+    protected const FTD_VISIBILITY_LAG_DAYS = 21;
+
+    /** @var array<int, array<int, array{date: string, shares: int, dtc: ?float}>> [tickerId => settlement-sorted SI rows] */
+    protected array $shortInterest = [];
+
+    /** @var array<int, array<int, array{date: string, fails: int}>> [tickerId => settlement-sorted FTD rows] */
+    protected array $ftds = [];
+
+    /** @var array<int, array<string, float>> [tickerId => [day => fee]] */
+    protected array $borrowFees = [];
+
+    /** @var array<int, array<int, string>> [tickerId => sorted halt dates Y-m-d] */
+    protected array $halts = [];
 
     /**
      * @param  array<int, int>  $tickerIds
@@ -98,6 +117,7 @@ class MarketIntelligence
             $self->loadTickerMentions($tickerIds, $from, $to);
             $self->loadInsiderTrades($tickerIds, $from, $to);
             $self->loadNewsCatalysts($tickerIds, $from, $to);
+            $self->loadSqueezeFuel($tickerIds, $from, $to);
         }
 
         $self->loadBenchmark($from, $to);
@@ -126,7 +146,142 @@ class MarketIntelligence
             'xbi_ret_5d' => $this->seriesReturn('xbi', $day, 5),
             ...$this->insiderFeatures($tickerId, $day),
             ...$this->newsFeatures($tickerId, $day),
+            ...$this->squeezeFeatures($tickerId, $day),
         ];
+    }
+
+    /**
+     * Squeeze-fuel features as-of $day, honoring publication lags:
+     *  - si_days_to_cover / si_pct_change: latest VISIBLE bi-monthly SI
+     *    (settlement + 13d) and its change vs the prior period.
+     *  - ftd_log: log10(1 + max daily fails) over the visible trailing 30
+     *    settlement days (settlement + 21d lag).
+     *  - borrow_fee: latest fee at/before day (max 5 days stale).
+     *  - halted_5d: trade halts in the last 5 days (forward-only data).
+     *
+     * @return array{si_days_to_cover: ?float, si_pct_change: ?float, ftd_log: ?float, borrow_fee: ?float, halted_5d: int}
+     */
+    protected function squeezeFeatures(int $tickerId, string $day): array
+    {
+        $out = ['si_days_to_cover' => null, 'si_pct_change' => null, 'ftd_log' => null, 'borrow_fee' => null, 'halted_5d' => 0];
+
+        // Short interest: rows sorted by settlement; visible = settled
+        // at least SI_VISIBILITY_LAG_DAYS before $day.
+        $siCutoff = gmdate('Y-m-d', strtotime($day.' UTC') - self::SI_VISIBILITY_LAG_DAYS * 86400);
+        $visible = [];
+
+        foreach ($this->shortInterest[$tickerId] ?? [] as $row) {
+            if ($row['date'] <= $siCutoff) {
+                $visible[] = $row;
+            }
+        }
+
+        if ($visible !== []) {
+            $latest = end($visible);
+            $out['si_days_to_cover'] = $latest['dtc'];
+
+            if (count($visible) >= 2) {
+                $prior = $visible[count($visible) - 2];
+                $out['si_pct_change'] = $prior['shares'] > 0
+                    ? round($latest['shares'] / $prior['shares'] - 1, 4)
+                    : null;
+            }
+        }
+
+        // FTDs: max daily fails over the visible trailing 30 settlement days.
+        $ftdCutoff = gmdate('Y-m-d', strtotime($day.' UTC') - self::FTD_VISIBILITY_LAG_DAYS * 86400);
+        $ftdFloor = gmdate('Y-m-d', strtotime($ftdCutoff.' UTC') - 30 * 86400);
+        $maxFails = 0;
+
+        foreach ($this->ftds[$tickerId] ?? [] as $row) {
+            if ($row['date'] <= $ftdCutoff && $row['date'] >= $ftdFloor) {
+                $maxFails = max($maxFails, $row['fails']);
+            }
+        }
+
+        if ($maxFails > 0) {
+            $out['ftd_log'] = round(log10(1 + $maxFails), 4);
+        }
+
+        // Borrow fee: latest at/before day, max 5 days stale (forward-only).
+        $fees = $this->borrowFees[$tickerId] ?? [];
+
+        for ($ts = strtotime($day.' UTC'), $i = 0; $i < 6; $i++) {
+            $candidate = gmdate('Y-m-d', $ts - $i * 86400);
+
+            if (isset($fees[$candidate])) {
+                $out['borrow_fee'] = $fees[$candidate];
+                break;
+            }
+        }
+
+        // Halts in the trailing 5 days (inclusive of $day).
+        $haltFloor = gmdate('Y-m-d', strtotime($day.' UTC') - 5 * 86400);
+
+        foreach ($this->halts[$tickerId] ?? [] as $haltDay) {
+            if ($haltDay >= $haltFloor && $haltDay <= $day) {
+                $out['halted_5d']++;
+            }
+        }
+
+        return $out;
+    }
+
+    /** @param array<int, int> $tickerIds */
+    protected function loadSqueezeFuel(array $tickerIds, string $from, string $to): void
+    {
+        // Padding covers visibility lags + prior-period comparisons.
+        $siFloor = gmdate('Y-m-d', strtotime($from.' UTC') - 75 * 86400);
+
+        DB::table('short_interest')
+            ->whereIn('ticker_id', $tickerIds)
+            ->where('settlement_date', '>=', $siFloor)
+            ->where('settlement_date', '<=', $to)
+            ->orderBy('settlement_date')
+            ->select('ticker_id', 'settlement_date', 'shares_short', 'days_to_cover')
+            ->each(function ($row): void {
+                $this->shortInterest[(int) $row->ticker_id][] = [
+                    'date' => substr((string) $row->settlement_date, 0, 10),
+                    'shares' => (int) $row->shares_short,
+                    'dtc' => $row->days_to_cover !== null ? (float) $row->days_to_cover : null,
+                ];
+            });
+
+        $ftdFloor = gmdate('Y-m-d', strtotime($from.' UTC') - 60 * 86400);
+
+        DB::table('ftd_reports')
+            ->whereIn('ticker_id', $tickerIds)
+            ->where('settlement_date', '>=', $ftdFloor)
+            ->where('settlement_date', '<=', $to)
+            ->orderBy('settlement_date')
+            ->select('ticker_id', 'settlement_date', 'fails_quantity')
+            ->each(function ($row): void {
+                $this->ftds[(int) $row->ticker_id][] = [
+                    'date' => substr((string) $row->settlement_date, 0, 10),
+                    'fails' => (int) $row->fails_quantity,
+                ];
+            });
+
+        DB::table('borrow_rates')
+            ->whereIn('ticker_id', $tickerIds)
+            ->where('day', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 10 * 86400))
+            ->where('day', '<=', $to)
+            ->whereNotNull('fee')
+            ->orderBy('day')
+            ->select('ticker_id', 'day', 'fee')
+            ->each(function ($row): void {
+                $this->borrowFees[(int) $row->ticker_id][substr((string) $row->day, 0, 10)] = (float) $row->fee;
+            });
+
+        DB::table('trade_halts')
+            ->whereIn('ticker_id', $tickerIds)
+            ->where('halted_at', '>=', gmdate('Y-m-d', strtotime($from.' UTC') - 10 * 86400))
+            ->where('halted_at', '<=', $to.' 23:59:59')
+            ->orderBy('halted_at')
+            ->select('ticker_id', 'halted_at')
+            ->each(function ($row): void {
+                $this->halts[(int) $row->ticker_id][] = substr((string) $row->halted_at, 0, 10);
+            });
     }
 
     /**
