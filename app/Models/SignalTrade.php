@@ -16,14 +16,22 @@ class SignalTrade extends Model
     public const FRICTION = 0.05;
 
     /*
-    | Phase-E book discipline (exit-lab, run 35, walk-forward sliced):
-    | wide close-based stop (2x ATR, clamped 5-25%), gap veto at entry,
-    | 5-session hold. The lab showed intraday-wick stops were burning
-    | ~2.5 pts/trade of edge; close-based stops recovered most of it.
+    | Phase-E book discipline — the exit lab's only both-halves-positive
+    | cell on honest GBM walk-forward tiers (run 35, tier >= 0.15,
+    | n=55, +5.8% net/trade, PF 1.82):
+    |   - NO-CHASE entry veto: skip when the stock already ran > 15%
+    |     in the 3 sessions before the fire (chasers own the losses);
+    |   - NO price stop: stops of every flavor destroyed value — the
+    |     10-session time cap bounds the disaster case instead;
+    |   - MENTION-COLLAPSE exit: leave when daily mentions drop below
+    |     25% of the fire day (the crowd leaving is the real stop);
+    |   - time exit at the day-10 close.
     */
-    public const PHASE_E_ATR_STOP_MULT = 2.0;
+    public const PHASE_E_MAX_PRE_RUN = 0.15;
 
-    public const PHASE_E_MAX_ENTRY_GAP = 0.15;
+    public const PHASE_E_COLLAPSE_FRAC = 0.25;
+
+    public const PHASE_E_HOLD_DAYS = 10;
 
     public const STOP_FRACTION = 0.10;
 

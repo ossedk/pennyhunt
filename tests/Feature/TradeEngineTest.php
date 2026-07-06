@@ -1,9 +1,12 @@
 <?php
 
 use App\Models\MarketBar;
+use App\Models\PostTickerMention;
+use App\Models\RawPost;
 use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\SignalTrade;
+use App\Models\Source;
 use App\Models\Ticker;
 use App\Services\Trading\TradeEngine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -58,38 +61,77 @@ it('opens pending trades only at or above the trade tier', function () {
         ->and(SignalTrade::first()->status)->toBe('pending_entry');
 });
 
-it('phase-e book vetoes gapped entries and survives intraday wicks the legacy book stops on', function () {
+it('phase-e book vetoes chased entries (pre-run above the cap)', function () {
     tradeModel();
     $signal = tradeSignal(0.20, '2026-06-01 15:00:00');
+    // The stock already ran +50% in the 3 sessions before the fire.
+    $signal->update(['breakdown' => ['market_gate' => ['pre_return_3d' => 0.50]]]);
     app(TradeEngine::class)->createForSignal($signal);
 
-    // Entry gaps +100% over the signal close: phase_e vetoes, legacy enters.
     tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.10, 0.95, 1.00);
-    tradeBar($signal->ticker_id, '2026-06-02', 2.00, 2.20, 1.90, 2.10);
+    tradeBar($signal->ticker_id, '2026-06-02', 1.05, 1.20, 1.00, 1.10);
 
     app(TradeEngine::class)->sync();
 
     expect(SignalTrade::where('book', 'phase_e')->first()->status)->toBe('cancelled')
-        ->and(SignalTrade::where('book', 'phase_e')->first()->exit_reason)->toBe('gap_veto')
+        ->and(SignalTrade::where('book', 'phase_e')->first()->exit_reason)->toBe('pre_run_veto')
         ->and(SignalTrade::where('book', 'legacy')->first()->status)->toBe('open');
 });
 
-it('phase-e stop only triggers on a close through the level, not a wick', function () {
+it('phase-e book carries no price stop and survives drops that stop the legacy book', function () {
     tradeModel();
     $signal = tradeSignal(0.20, '2026-06-01 15:00:00');
     app(TradeEngine::class)->createForSignal($signal);
 
-    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.05, 0.95, 1.00); // signal day (no gap)
+    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.05, 0.95, 1.00); // signal day
     tradeBar($signal->ticker_id, '2026-06-02', 1.02, 1.06, 0.98, 1.04); // entry day
-    // Deep intraday wick to 0.70 but closes at 1.00: legacy (stop 0.918)
-    // stops out on the wick; phase_e (close-based) holds.
-    tradeBar($signal->ticker_id, '2026-06-03', 1.03, 1.05, 0.70, 1.00);
+    // -30% close: legacy stops (0.918 breached); phase_e holds (no stop).
+    tradeBar($signal->ticker_id, '2026-06-03', 1.00, 1.02, 0.70, 0.72);
 
     app(TradeEngine::class)->sync();
 
-    expect(SignalTrade::where('book', 'legacy')->first()->status)->toBe('closed')
-        ->and(SignalTrade::where('book', 'legacy')->first()->exit_reason)->toBe('stop')
-        ->and(SignalTrade::where('book', 'phase_e')->first()->status)->toBe('open');
+    $phaseE = SignalTrade::where('book', 'phase_e')->first();
+
+    expect(SignalTrade::where('book', 'legacy')->first()->exit_reason)->toBe('stop')
+        ->and($phaseE->status)->toBe('open')
+        ->and($phaseE->stop_price)->toBeNull();
+});
+
+it('phase-e book exits when the crowd collapses', function () {
+    tradeModel();
+    $signal = tradeSignal(0.20, '2026-06-01 15:00:00');
+    app(TradeEngine::class)->createForSignal($signal);
+
+    // Fire-day buzz: 20 mentions on 2026-06-01; then silence.
+    $source = Source::create([
+        'key' => 'reddit:collapse', 'type' => 'reddit', 'name' => 'r/collapse',
+        'enabled' => true, 'poll_interval_seconds' => 120, 'config' => [],
+    ]);
+
+    foreach (range(1, 20) as $i) {
+        $post = RawPost::create([
+            'source_id' => $source->id, 'external_id' => 'clp_'.$i, 'kind' => 'post',
+            'body' => 'to the moon', 'score' => 5, 'num_comments' => 0,
+            'posted_at' => '2026-06-01 14:00:00', 'ingested_at' => now(), 'meta' => [],
+        ]);
+        PostTickerMention::create([
+            'raw_post_id' => $post->id, 'ticker_id' => $signal->ticker_id,
+            'method' => 'cashtag', 'confidence' => 1.0, 'posted_at' => $post->posted_at,
+        ]);
+    }
+
+    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.05, 0.95, 1.00);
+    tradeBar($signal->ticker_id, '2026-06-02', 1.02, 1.06, 0.98, 1.04); // entry
+    tradeBar($signal->ticker_id, '2026-06-03', 1.05, 1.10, 1.00, 1.06); // day 1
+    tradeBar($signal->ticker_id, '2026-06-04', 1.06, 1.12, 1.02, 1.08); // day 2: prior day had 0 mentions
+
+    app(TradeEngine::class)->sync();
+
+    $phaseE = SignalTrade::where('book', 'phase_e')->first();
+
+    expect($phaseE->status)->toBe('closed')
+        ->and($phaseE->exit_reason)->toBe('mention_collapse')
+        ->and($phaseE->exit_date->toDateString())->toBe('2026-06-04');
 });
 
 it('does not open trades without an active tiered model', function () {

@@ -199,11 +199,24 @@ overnight breaks.
    walk-forward GBM scores (`backtest_events.gbm_confidence`) so tier
    slicing uses the honest out-of-sample model, not the logistic proxy.
 
+**GBM-tier slicing (honest walk-forward scores) changed the picture:**
+- Tier ≥ 0.15 (191 trades): best cell ≈ breakeven ("no stop + mention
+  collapse, 10d": +0.2% net, PF 1.02).
+- **Tier ≥ 0.15 AND no-chase (pre-run ≤ 15%, 55 trades): "no stop +
+  mention collapse 25%, 10d" = +5.8% net/trade, PF 1.82 — the ONLY
+  config positive in BOTH halves (+3.4% / +8.0%).** Close-stop variants
+  ~+4.9% but half-unstable. n=55 is small; treat as promising, not
+  proven — hence the paper book below.
+- Tier ≥ 0.25: deeply negative everywhere — extreme model confidence
+  selects stocks whose move is already priced (chasers). More
+  confidence ≠ more trade; the sweet spot is tier ∈ [0.15, ~0.25).
+
 **Shipped to production:** parallel paper book `phase_e` alongside
-`legacy` — same tier entries, but gap-veto (skip entries opening >15%
-over the fire close), close-based 2×ATR stop (clamped 5–25%), 5-session
-hold. Both books accumulate forward evidence from every tier signal;
-all display surfaces remain on the legacy book.
+`legacy` — same tier entries, but: pre-run veto (skip when the stock
+ran > 15% over the 3 sessions before the fire), NO price stop,
+mention-collapse exit (daily mentions < 25% of fire day → exit next
+open), day-10 time cap. Both books accumulate forward evidence from
+every tier signal; all display surfaces remain on the legacy book.
 
 ### Phase E (CONTINUING) — From predictive edge to tradable P&L (planned 2026-07-06)
 

@@ -8,7 +8,9 @@ use App\Models\MarketBar;
 use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\SignalTrade;
-use App\Services\Features\TechnicalFeatures;
+use App\Support\AnalyticsGate;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The forward-test engine: turns trade-tier signals into paper positions and
@@ -110,18 +112,14 @@ class TradeEngine
             return;
         }
 
-        // Phase-E book: no chasing — a large gap over the fire-day close
-        // means we'd be paying the move we predicted. Veto the entry.
+        // Phase-E book: NO-CHASE veto — the lab's decisive finding is that
+        // losses concentrate in entries after the move already started.
+        // Skip when the stock ran > 15% over the 3 sessions pre-fire.
         if ($trade->book === 'phase_e') {
-            $signalClose = (float) (MarketBar::query()
-                ->where('ticker_id', $trade->ticker_id)
-                ->where('interval', '1d')
-                ->whereDate('bucket_start', '<=', $firedDate)
-                ->orderByDesc('bucket_start')
-                ->value('close') ?? 0);
+            $preRun = data_get($trade->signal->breakdown, 'market_gate.pre_return_3d');
 
-            if ($signalClose > 0 && ($entry / $signalClose - 1) > SignalTrade::PHASE_E_MAX_ENTRY_GAP) {
-                $trade->update(['status' => 'cancelled', 'exit_reason' => 'gap_veto']);
+            if ($preRun !== null && (float) $preRun > SignalTrade::PHASE_E_MAX_PRE_RUN) {
+                $trade->update(['status' => 'cancelled', 'exit_reason' => 'pre_run_veto']);
                 TradeUpdated::dispatch($trade, 'cancelled');
 
                 return;
@@ -132,7 +130,10 @@ class TradeEngine
             'status' => 'open',
             'entry_date' => $entryBar->bucket_start->toDateString(),
             'entry_price' => round($entry, 4),
-            'stop_price' => round($this->initialStop($trade, $entry), 4),
+            // Phase-E carries NO price stop (every stop flavor destroyed
+            // value in the lab); the mention-collapse exit and the 10-day
+            // cap bound the risk instead.
+            'stop_price' => $trade->book === 'phase_e' ? null : round($entry * (1 - SignalTrade::STOP_FRACTION), 4),
         ]);
 
         TradeUpdated::dispatch($trade, 'opened');
@@ -141,95 +142,121 @@ class TradeEngine
     }
 
     /**
-     * Legacy book: fixed 10% stop. Phase-E book: 2x-ATR stop (clamped
-     * 5–25%) — the stock's own noise floor, not a universal percentage.
-     */
-    protected function initialStop(SignalTrade $trade, float $entry): float
-    {
-        if ($trade->book !== 'phase_e') {
-            return $entry * (1 - SignalTrade::STOP_FRACTION);
-        }
-
-        $bars = MarketBar::query()
-            ->where('ticker_id', $trade->ticker_id)
-            ->where('interval', '1d')
-            ->orderByDesc('bucket_start')
-            ->limit(20)
-            ->get()
-            ->reverse()
-            ->values()
-            ->map(fn (MarketBar $b): array => [
-                'date' => $b->bucket_start->toDateString(),
-                'open' => (float) $b->open,
-                'high' => (float) $b->high,
-                'low' => (float) $b->low,
-                'close' => (float) $b->close,
-                'volume' => (float) $b->volume,
-            ])
-            ->all();
-
-        $atrPct = count($bars) >= 15
-            ? TechnicalFeatures::compute($bars, count($bars) - 1)['atr_pct']
-            : null;
-
-        $distance = $atrPct !== null
-            ? min(max(SignalTrade::PHASE_E_ATR_STOP_MULT * min($atrPct, 1.0), 0.05), 0.25)
-            : SignalTrade::STOP_FRACTION;
-
-        return $entry * (1 - $distance);
-    }
-
-    /**
      * Same pessimistic rules as Backtester::simulateExit, on however many
      * completed bars exist so far. Also back-fills time_exit_date once the
-     * fifth post-entry session is known.
+     * book's final session is known.
+     *
+     * Legacy book: 10% stop (open/low breach fills pessimistically),
+     * day-5 time exit. Phase-E book: no price stop; exits when the crowd
+     * leaves (daily mentions < 25% of fire-day) or at the day-10 close.
      */
     protected function walkExits(SignalTrade $trade): void
     {
+        $holdDays = $trade->book === 'phase_e' ? SignalTrade::PHASE_E_HOLD_DAYS : SignalTrade::HOLD_DAYS;
+
         $bars = MarketBar::query()
             ->where('ticker_id', $trade->ticker_id)
             ->where('interval', '1d')
             ->whereDate('bucket_start', '>=', $trade->entry_date)
             ->orderBy('bucket_start')
-            ->limit(SignalTrade::HOLD_DAYS + 1)
+            ->limit($holdDays + 1)
             ->get();
 
         if ($bars->isEmpty()) {
             return;
         }
 
-        if ($trade->time_exit_date === null && $bars->count() > SignalTrade::HOLD_DAYS) {
-            $trade->update(['time_exit_date' => $bars[SignalTrade::HOLD_DAYS]->bucket_start->toDateString()]);
+        if ($trade->time_exit_date === null && $bars->count() > $holdDays) {
+            $trade->update(['time_exit_date' => $bars[$holdDays]->bucket_start->toDateString()]);
         }
 
         $entry = $trade->entry_price;
         $stop = $trade->stop_price;
+        $collapse = $trade->book === 'phase_e' ? $this->mentionCollapseOffsets($trade, $bars) : [];
 
         foreach ($bars as $offset => $bar) {
             // On the entry day the fill IS the entry open, so gap logic only
             // applies from day 1 onward (mirrors the Backtester).
             $open = $offset === 0 ? $entry : (float) $bar->open;
 
-            if ($trade->book === 'phase_e') {
-                // Close-based stop: only a CLOSE through the level exits —
-                // intraday wicks don't shake the position out.
-                if ((float) $bar->close <= $stop) {
-                    $this->close($trade, $bar->bucket_start->toDateString(), (float) $bar->close, 'stop');
+            // Crowd-collapse exit (phase-E): the prior session's mentions
+            // fell below the collapse floor — exit at this session's open.
+            if (($collapse[$offset] ?? false) === true) {
+                $this->close($trade, $bar->bucket_start->toDateString(), $open, 'mention_collapse');
 
-                    return;
-                }
-            } elseif ($open <= $stop || (float) $bar->low <= $stop) {
+                return;
+            }
+
+            if ($stop !== null && ($open <= $stop || (float) $bar->low <= $stop)) {
                 $this->close($trade, $bar->bucket_start->toDateString(), min($open, $stop), 'stop');
 
                 return;
             }
 
-            if ($offset === SignalTrade::HOLD_DAYS) {
+            if ($offset === $holdDays) {
                 $this->close($trade, $bar->bucket_start->toDateString(), (float) $bar->close, 'time');
 
                 return;
             }
         }
+    }
+
+    /**
+     * Which session offsets (>= 2) open under a mention collapse: the full
+     * prior session's mentions (weekends folded onto the next session)
+     * dropped below PHASE_E_COLLAPSE_FRAC of the fire-day count.
+     *
+     * @param  Collection<int, MarketBar>  $bars
+     * @return array<int, bool>
+     */
+    protected function mentionCollapseOffsets(SignalTrade $trade, $bars): array
+    {
+        $fireDay = $trade->signal->fired_at->toDateString();
+
+        $gate = AnalyticsGate::mentionJoin('m');
+
+        $rows = DB::select(<<<SQL
+            SELECT date(m.posted_at) AS day, COUNT(*) AS mentions
+            FROM post_ticker_mentions m
+            {$gate}
+            WHERE m.ticker_id = ? AND m.posted_at >= ?
+            GROUP BY day
+        SQL, [$trade->ticker_id, $fireDay]);
+
+        $daily = [];
+
+        foreach ($rows as $row) {
+            $daily[(string) $row->day] = (int) $row->mentions;
+        }
+
+        $fireMentions = $daily[$fireDay] ?? 0;
+
+        if ($fireMentions <= 0) {
+            return [];
+        }
+
+        $floor = SignalTrade::PHASE_E_COLLAPSE_FRAC * $fireMentions;
+        $out = [];
+        $prevDate = $fireDay;
+
+        foreach ($bars as $offset => $bar) {
+            $date = $bar->bucket_start->toDateString();
+
+            if ($offset >= 2) {
+                // Mentions across the prior session's span (covers weekends).
+                $sum = 0;
+
+                for ($ts = strtotime($prevDate.' UTC'), $end = strtotime($date.' UTC'); $ts < $end; $ts += 86400) {
+                    $sum += $daily[gmdate('Y-m-d', $ts)] ?? 0;
+                }
+
+                $out[$offset] = $sum < $floor && $date !== now()->toDateString();
+            }
+
+            $prevDate = $date;
+        }
+
+        return $out;
     }
 
     protected function close(SignalTrade $trade, string $date, float $price, string $reason): void
