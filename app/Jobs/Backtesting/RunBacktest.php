@@ -20,7 +20,7 @@ class RunBacktest implements ShouldQueue
     // A 6-month window took ~10min on prod hardware (slower than the dev
     // Mac this was tuned on); 24 months needs real headroom. Must stay
     // below the redis connection's retry_after (REDIS_QUEUE_RETRY_AFTER).
-    public int $timeout = 3600;
+    public int $timeout = 5400; // full-feature 24-month runs push past an hour
 
     public function __construct(public int $backtestRunId)
     {
