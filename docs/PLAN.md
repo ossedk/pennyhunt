@@ -172,6 +172,26 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
+### Phase F validation on run 36 — full feature universe (2026-07-06)
+
+Run 36 = first 24-month backtest with all 46 features live (squeeze
+fuel + day-0 + insider + LLM at 90.9% coverage). Results:
+- **Moonshot head improved: OOS AUC 0.855** (from 0.814) with day-0 +
+  squeeze-fuel features in the vector, over 19,908 events.
+- Confidence GBM (shadow run36.17): edge +4.8% vs base reference —
+  in line with run 35 (+5.0%), event mix differs (23,390 events).
+- **The moonshot cell held direction on fresh membership** (the head
+  changed, so the 17-event cell ≠ run 35's 24): NO STOP + day-5 hold
+  again the best exit (+6.4% net, PF 1.43); 10-day holds catastrophic
+  here (−17.5%) — day-5 discipline for the moonshot book confirmed.
+- **The extreme-score tail is dead on BOTH runs**: run 35 tier ≥ 0.25
+  deeply negative; run 36 moonshot p ≥ 0.25: 0/9 hits. The live gate is
+  now a BAND [0.15, 0.25) — extreme model certainty means the move
+  already happened.
+- Score-band hit rates (no-chase, ≤$5): p∈[0.15,0.25): 19.2% hit
+  (4.2x base); p≥0.25: 0%. n remains small — the moonshot paper book
+  is the arbiter.
+
 ### Phase F — model-first firing + moonshot head (2026-07-06)
 
 **The recall audit that reframed everything:** among run 35's 26,592

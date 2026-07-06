@@ -225,7 +225,9 @@ class SignalEngine
 
         $moonshotP = $moonshot->predict($features);
 
-        if ($moonshotP < (float) $config['min_p']) {
+        // Band gate, not a floor: scores above max_p are the chaser tail
+        // (0 hits in the top band on both validation runs).
+        if ($moonshotP < (float) $config['min_p'] || $moonshotP >= (float) ($config['max_p'] ?? 1.0)) {
             return null;
         }
 

@@ -238,6 +238,10 @@ return [
     'moonshot' => [
         'enabled' => (bool) env('PENNYHUNT_MOONSHOT', true),
         'min_p' => (float) env('PENNYHUNT_MOONSHOT_MIN_P', 0.15),
+        // Band cap: on BOTH validation runs the extreme-score tail was
+        // pure chasers (run 35 conf>=0.25 deeply negative; run 36
+        // moonshot p>=0.25: 0/9 hits). Extreme certainty = already moved.
+        'max_p' => (float) env('PENNYHUNT_MOONSHOT_MAX_P', 0.25),
         'max_pre_run' => 0.15,
         'max_entry_price' => 5.0,
         'min_smallcap_rel' => -0.03,
