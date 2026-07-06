@@ -172,6 +172,58 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
+### Phase G (NEXT) — statistical power, ticket sizing, and the actionable cockpit (planned 2026-07-06)
+
+**The honest moonshot P&L (run 36, live gate config, $100k).** Band
+[0.15, 0.25) + no-chase + ≤$5 + regime + per-ticker cooldown, no-stop/
+day-5 exits: **14 trades / 24 months, hit rate 14.3%, avg net +3.3% —
+but the portfolio LOSES at every slot sizing** (3 slots: −7.7%, DD 45%).
+Median trade −12.4%; one trade (AEHL +226%) carries the entire average.
+Diagnosis: (a) n is far too small — a 1-in-14 lottery profile cannot
+survive 33%-of-equity stakes; the losses compound before the winner
+arrives; (b) within-band selection is weak — 80% of band members lose.
+The composite-book phase-E cell (n=55, +5.8%/trade, both halves
+positive) remains the strongest validated cell.
+
+**Tradeoff analysis.** (1) *Sizing vs conviction*: lottery-profile books
+demand many small stakes (2–5% risk tickets), not concentrated slots —
+fractional-Kelly on the moonshot score converts the same trades from
+−7.7% to positive expectancy survival; this is a math fix, free.
+(2) *More data vs better selection*: n=14 can't be fixed by modeling —
+grow candidate flow (Stocktwits ingestion, more subreddits, 5-minute
+firing cadence) AND add within-band entry confirmation (day-0 opening-
+range gate: only fill when 10:00 ET holds above VWAP — requires 10am-
+entry simulation in the lab); do both, they compound. (3) *Speed vs
+noise*: 5-minute evaluation catches moves the hourly cadence misses but
+multiplies API cost and false fires — gate the fast path to tickers
+already near the band. (4) *Shadow vs active model churn*: registry
+now holds two roles (confidence + moonshot) and confuses even us — the
+UI must show roles, AUC for heads, and per-role active badges before
+more models pile up. (5) *Alerts vs dashboards*: a trader away from the
+screen misses fires entirely — push delivery (Telegram) of fires,
+LiveDesk verdict flips, halts and time-exits is worth more than any new
+page; dashboards serve analysis, alerts serve action.
+
+**Workstreams (recommended order):**
+1. **Ticket sizing** — fractional-Kelly/fixed-risk sizing simulation in
+   the portfolio sim + the moonshot paper book records a suggested
+   ticket size; validates the lottery math.
+2. **Registry clarity + books scoreboard** — role column/AUC in Model
+   registry; a Books panel (legacy vs phase_e vs moonshot forward
+   equity curves, PF, hit rate, DD): the "which strategy is winning
+   live" view.
+3. **Candidate flow** — Stocktwits ingestion (new source type, same
+   pipeline gates), subreddit list expansion, and a 5-minute model-first
+   evaluation lane for tickers within 0.05 of the band.
+4. **Entry confirmation** — Day0Features gains 10:00-price; exit lab
+   gains a "10am entry" mode; if OR-confirmation holds up, the moonshot
+   book fills at 10:30 only when the tape confirms.
+5. **Alert delivery** — Telegram bot: moonshot/composite tier fires,
+   LiveDesk verdict changes on open positions, halts on held names,
+   time-exit reminders.
+6. **Desk upgrades** — moonshot radar card (band-proximity list with
+   live scores), books P&L strip, halts card, regime mini-bar.
+
 ### Phase F validation on run 36 — full feature universe (2026-07-06)
 
 Run 36 = first 24-month backtest with all 46 features live (squeeze
