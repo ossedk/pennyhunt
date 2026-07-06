@@ -47,6 +47,7 @@ class TradeAlerts
     public function checkOpenTrades(): void
     {
         SignalTrade::query()
+            ->where('book', 'legacy')
             ->where('status', 'open')
             ->with(['ticker:id,symbol', 'signal:id,fired_at'])
             ->each(function (SignalTrade $trade): void {

@@ -23,7 +23,7 @@ class FeedController extends Controller
 
         // "Positions only": the tape for tickers we currently hold.
         $positionTickerIds = ($validated['positions'] ?? null) === '1'
-            ? SignalTrade::query()->whereIn('status', ['pending_entry', 'open'])->pluck('ticker_id')
+            ? SignalTrade::query()->where('book', 'legacy')->whereIn('status', ['pending_entry', 'open'])->pluck('ticker_id')
             : null;
 
         $posts = RawPost::query()

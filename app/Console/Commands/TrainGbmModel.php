@@ -72,6 +72,24 @@ class TrainGbmModel extends Command
             return self::FAILURE;
         }
 
+        // Store per-event walk-forward (out-of-sample) GBM scores — the
+        // honest tier signal for exit-lab slicing and Kelly payoff ratios.
+        $oosCsv = str_replace('.json', '_oos.csv', $artifactPath);
+
+        if (is_file($oosCsv)) {
+            $fh = fopen($oosCsv, 'r');
+            fgetcsv($fh, escape: '\\'); // header
+            $updates = 0;
+
+            while (($row = fgetcsv($fh, escape: '\\')) !== false) {
+                DB::table('backtest_events')->where('id', (int) $row[0])->update(['gbm_confidence' => round((float) $row[1], 6)]);
+                $updates++;
+            }
+
+            fclose($fh);
+            $this->line("  {$updates} events updated with walk-forward GBM confidence.");
+        }
+
         $model = new SignalModel(['parameters' => $artifact]);
 
         foreach ($artifact['parity'] as $i => $vector) {

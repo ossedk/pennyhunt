@@ -15,6 +15,16 @@ class SignalTrade extends Model
 {
     public const FRICTION = 0.05;
 
+    /*
+    | Phase-E book discipline (exit-lab, run 35, walk-forward sliced):
+    | wide close-based stop (2x ATR, clamped 5-25%), gap veto at entry,
+    | 5-session hold. The lab showed intraday-wick stops were burning
+    | ~2.5 pts/trade of edge; close-based stops recovered most of it.
+    */
+    public const PHASE_E_ATR_STOP_MULT = 2.0;
+
+    public const PHASE_E_MAX_ENTRY_GAP = 0.15;
+
     public const STOP_FRACTION = 0.10;
 
     public const HOLD_DAYS = 5;

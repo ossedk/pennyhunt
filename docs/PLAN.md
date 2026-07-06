@@ -172,7 +172,40 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
-### Phase E (NEXT) — From predictive edge to tradable P&L (planned 2026-07-06)
+### Phase E — first results (2026-07-06)
+
+**Exit Lab shipped** (`pennyhunt:exit-lab`): re-simulates a run's fired
+trades under an exit-rule grid in seconds (ExitSimulator, shared code
+path), with per-ticker FrictionModel, first/second-half stability splits
+and slice filters (tier / classification / max pre-run). Found and fixed
+a data integrity bug on the way: split-adjustment seams between stored
+entries and later-resynced bars fabricated returns (SRXH "+181,300%");
+both the lab and the Backtester now skip windows with >4x/<0.25x
+overnight breaks.
+
+**Findings (run 35, 671 clean fired trades, per-ticker friction):**
+1. *Stops destroy value here.* Every stop config underperforms
+   no-stop-at-all on the same slice: legacy −2.4%/trade net, no-stop
+   −1.3%. Intraday-wick stops are the worst offenders; close-based
+   stops recover most of the damage (−1.6%).
+2. *Chasing is where the losses live.* Prediction-only slice (pre-run
+   ≤ 15%): no-stop −0.3% net. Flat/down-tape slice (pre-run ≤ 0):
+   **no-stop +1.1% net, PF 1.11** — the only positive cell, but
+   unstable across halves (+3.7% / −1.3%), so not yet tradeable truth.
+3. *Long holds decay.* 10-session holds underperform 5-session
+   everywhere — the move is over fast, or it isn't coming.
+4. *Logistic-confidence tiers select chasers* (higher tier = worse
+   P&L). Fixed the tooling: train-gbm now persists per-event
+   walk-forward GBM scores (`backtest_events.gbm_confidence`) so tier
+   slicing uses the honest out-of-sample model, not the logistic proxy.
+
+**Shipped to production:** parallel paper book `phase_e` alongside
+`legacy` — same tier entries, but gap-veto (skip entries opening >15%
+over the fire close), close-based 2×ATR stop (clamped 5–25%), 5-session
+hold. Both books accumulate forward evidence from every tier signal;
+all display surfaces remain on the legacy book.
+
+### Phase E (CONTINUING) — From predictive edge to tradable P&L (planned 2026-07-06)
 
 **Where we stand.** The model finds winners: run 35 (24 months, walk-forward,
 no look-ahead) shows 15.2% hit rate vs 4.3% base (3.5x), top-decile 13.0%

@@ -8,6 +8,7 @@ use App\Models\MarketBar;
 use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\SignalTrade;
+use App\Services\Features\TechnicalFeatures;
 
 /**
  * The forward-test engine: turns trade-tier signals into paper positions and
@@ -39,21 +40,31 @@ class TradeEngine
             return null;
         }
 
-        $trade = SignalTrade::firstOrCreate(
-            ['signal_id' => $signal->id],
-            [
-                'ticker_id' => $signal->ticker_id,
-                'status' => 'pending_entry',
-                'tier' => 'trade',
-                'confidence_at_entry' => $signal->confidence,
-                'model_version' => $signal->model_version,
-                'kelly_fraction' => $this->kellyFraction($signal->confidence, $model),
-            ],
-        );
+        $primary = null;
 
-        TradeUpdated::dispatch($trade, 'created');
+        // Two parallel paper books per tier signal: the validated legacy
+        // discipline and the phase-E exit-lab discipline. Forward evidence
+        // for both accumulates from the same entries; the legacy trade is
+        // the primary (what the UI shows).
+        foreach (['legacy', 'phase_e'] as $book) {
+            $trade = SignalTrade::firstOrCreate(
+                ['signal_id' => $signal->id, 'book' => $book],
+                [
+                    'ticker_id' => $signal->ticker_id,
+                    'status' => 'pending_entry',
+                    'tier' => 'trade',
+                    'confidence_at_entry' => $signal->confidence,
+                    'model_version' => $signal->model_version,
+                    'kelly_fraction' => $this->kellyFraction($signal->confidence, $model),
+                ],
+            );
 
-        return $trade;
+            TradeUpdated::dispatch($trade, 'created');
+
+            $primary ??= $trade;
+        }
+
+        return $primary;
     }
 
     /** Fill pending entries and walk open positions over completed bars. */
@@ -99,16 +110,73 @@ class TradeEngine
             return;
         }
 
+        // Phase-E book: no chasing — a large gap over the fire-day close
+        // means we'd be paying the move we predicted. Veto the entry.
+        if ($trade->book === 'phase_e') {
+            $signalClose = (float) (MarketBar::query()
+                ->where('ticker_id', $trade->ticker_id)
+                ->where('interval', '1d')
+                ->whereDate('bucket_start', '<=', $firedDate)
+                ->orderByDesc('bucket_start')
+                ->value('close') ?? 0);
+
+            if ($signalClose > 0 && ($entry / $signalClose - 1) > SignalTrade::PHASE_E_MAX_ENTRY_GAP) {
+                $trade->update(['status' => 'cancelled', 'exit_reason' => 'gap_veto']);
+                TradeUpdated::dispatch($trade, 'cancelled');
+
+                return;
+            }
+        }
+
         $trade->update([
             'status' => 'open',
             'entry_date' => $entryBar->bucket_start->toDateString(),
             'entry_price' => round($entry, 4),
-            'stop_price' => round($entry * (1 - SignalTrade::STOP_FRACTION), 4),
+            'stop_price' => round($this->initialStop($trade, $entry), 4),
         ]);
 
         TradeUpdated::dispatch($trade, 'opened');
 
         $this->walkExits($trade->refresh());
+    }
+
+    /**
+     * Legacy book: fixed 10% stop. Phase-E book: 2x-ATR stop (clamped
+     * 5–25%) — the stock's own noise floor, not a universal percentage.
+     */
+    protected function initialStop(SignalTrade $trade, float $entry): float
+    {
+        if ($trade->book !== 'phase_e') {
+            return $entry * (1 - SignalTrade::STOP_FRACTION);
+        }
+
+        $bars = MarketBar::query()
+            ->where('ticker_id', $trade->ticker_id)
+            ->where('interval', '1d')
+            ->orderByDesc('bucket_start')
+            ->limit(20)
+            ->get()
+            ->reverse()
+            ->values()
+            ->map(fn (MarketBar $b): array => [
+                'date' => $b->bucket_start->toDateString(),
+                'open' => (float) $b->open,
+                'high' => (float) $b->high,
+                'low' => (float) $b->low,
+                'close' => (float) $b->close,
+                'volume' => (float) $b->volume,
+            ])
+            ->all();
+
+        $atrPct = count($bars) >= 15
+            ? TechnicalFeatures::compute($bars, count($bars) - 1)['atr_pct']
+            : null;
+
+        $distance = $atrPct !== null
+            ? min(max(SignalTrade::PHASE_E_ATR_STOP_MULT * min($atrPct, 1.0), 0.05), 0.25)
+            : SignalTrade::STOP_FRACTION;
+
+        return $entry * (1 - $distance);
     }
 
     /**
@@ -142,7 +210,15 @@ class TradeEngine
             // applies from day 1 onward (mirrors the Backtester).
             $open = $offset === 0 ? $entry : (float) $bar->open;
 
-            if ($open <= $stop || (float) $bar->low <= $stop) {
+            if ($trade->book === 'phase_e') {
+                // Close-based stop: only a CLOSE through the level exits —
+                // intraday wicks don't shake the position out.
+                if ((float) $bar->close <= $stop) {
+                    $this->close($trade, $bar->bucket_start->toDateString(), (float) $bar->close, 'stop');
+
+                    return;
+                }
+            } elseif ($open <= $stop || (float) $bar->low <= $stop) {
                 $this->close($trade, $bar->bucket_start->toDateString(), min($open, $stop), 'stop');
 
                 return;

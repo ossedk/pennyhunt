@@ -50,10 +50,46 @@ it('opens pending trades only at or above the trade tier', function () {
     tradeModel();
     $engine = app(TradeEngine::class);
 
+    // One trade per book (legacy + phase_e) at/above tier; none below.
     expect($engine->createForSignal(tradeSignal(0.20)))->not->toBeNull()
         ->and($engine->createForSignal(tradeSignal(0.05)))->toBeNull()
-        ->and(SignalTrade::count())->toBe(1)
+        ->and(SignalTrade::count())->toBe(2)
+        ->and(SignalTrade::query()->pluck('book')->sort()->values()->all())->toBe(['legacy', 'phase_e'])
         ->and(SignalTrade::first()->status)->toBe('pending_entry');
+});
+
+it('phase-e book vetoes gapped entries and survives intraday wicks the legacy book stops on', function () {
+    tradeModel();
+    $signal = tradeSignal(0.20, '2026-06-01 15:00:00');
+    app(TradeEngine::class)->createForSignal($signal);
+
+    // Entry gaps +100% over the signal close: phase_e vetoes, legacy enters.
+    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.10, 0.95, 1.00);
+    tradeBar($signal->ticker_id, '2026-06-02', 2.00, 2.20, 1.90, 2.10);
+
+    app(TradeEngine::class)->sync();
+
+    expect(SignalTrade::where('book', 'phase_e')->first()->status)->toBe('cancelled')
+        ->and(SignalTrade::where('book', 'phase_e')->first()->exit_reason)->toBe('gap_veto')
+        ->and(SignalTrade::where('book', 'legacy')->first()->status)->toBe('open');
+});
+
+it('phase-e stop only triggers on a close through the level, not a wick', function () {
+    tradeModel();
+    $signal = tradeSignal(0.20, '2026-06-01 15:00:00');
+    app(TradeEngine::class)->createForSignal($signal);
+
+    tradeBar($signal->ticker_id, '2026-06-01', 1.00, 1.05, 0.95, 1.00); // signal day (no gap)
+    tradeBar($signal->ticker_id, '2026-06-02', 1.02, 1.06, 0.98, 1.04); // entry day
+    // Deep intraday wick to 0.70 but closes at 1.00: legacy (stop 0.918)
+    // stops out on the wick; phase_e (close-based) holds.
+    tradeBar($signal->ticker_id, '2026-06-03', 1.03, 1.05, 0.70, 1.00);
+
+    app(TradeEngine::class)->sync();
+
+    expect(SignalTrade::where('book', 'legacy')->first()->status)->toBe('closed')
+        ->and(SignalTrade::where('book', 'legacy')->first()->exit_reason)->toBe('stop')
+        ->and(SignalTrade::where('book', 'phase_e')->first()->status)->toBe('open');
 });
 
 it('does not open trades without an active tiered model', function () {

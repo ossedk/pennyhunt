@@ -29,6 +29,7 @@ class SignalsController extends Controller
     public function index(MarketClock $clock): Response
     {
         $positions = SignalTrade::query()
+            ->where('book', 'legacy')
             ->whereIn('status', ['pending_entry', 'open'])
             ->with(['ticker:id,symbol,name', 'signal:id,fired_at,composite_score,confidence'])
             ->orderByRaw("status = 'open' desc")
@@ -37,6 +38,7 @@ class SignalsController extends Controller
             ->map(fn (SignalTrade $t): array => $this->tradePayload($t, withHoldingDay: true));
 
         $closed = SignalTrade::query()
+            ->where('book', 'legacy')
             ->where('status', 'closed')
             ->with(['ticker:id,symbol,name', 'signal:id,fired_at,composite_score,confidence'])
             ->orderByDesc('exit_date')
@@ -101,7 +103,7 @@ class SignalsController extends Controller
     {
         $signal->load('ticker:id,symbol,name,exchange');
 
-        $trade = SignalTrade::query()->where('signal_id', $signal->id)->first();
+        $trade = SignalTrade::query()->where('signal_id', $signal->id)->where('book', 'legacy')->first();
         $model = SignalModel::active();
         $run = BacktestRun::query()->where('status', 'done')->orderByDesc('id')->first();
 
@@ -348,11 +350,11 @@ class SignalsController extends Controller
      */
     protected function scoreboard(): array
     {
-        $closed = SignalTrade::query()->where('status', 'closed');
+        $closed = SignalTrade::query()->where('book', 'legacy')->where('status', 'closed');
         $n = (clone $closed)->count();
 
         return [
-            'open' => SignalTrade::query()->whereIn('status', ['pending_entry', 'open'])->count(),
+            'open' => SignalTrade::query()->where('book', 'legacy')->whereIn('status', ['pending_entry', 'open'])->count(),
             'closed' => $n,
             'win_rate' => $n > 0 ? round((clone $closed)->where('net_return', '>', 0)->count() / $n, 3) : null,
             'avg_net' => $n > 0 ? round((float) (clone $closed)->avg('net_return'), 4) : null,

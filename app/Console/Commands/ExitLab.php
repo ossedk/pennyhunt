@@ -62,7 +62,12 @@ class ExitLab extends Command
         $events = DB::table('backtest_events')
             ->where('backtest_run_id', $runId)
             ->where('fired', true)
-            ->when($this->option('tier') !== null, fn ($q) => $q->where('confidence', '>=', (float) $this->option('tier')))
+            // Tier slicing prefers the GBM walk-forward score (out-of-sample);
+            // logistic confidence is the fallback for events that predate it.
+            ->when($this->option('tier') !== null, fn ($q) => $q->whereRaw(
+                'COALESCE(gbm_confidence, confidence) >= ?',
+                [(float) $this->option('tier')],
+            ))
             ->when($this->option('class') !== null, fn ($q) => $q->where('classification', $this->option('class')))
             ->when($this->option('max-prerun') !== null, fn ($q) => $q->where('pre_return_3d', '<=', (float) $this->option('max-prerun')))
             ->orderBy('day')

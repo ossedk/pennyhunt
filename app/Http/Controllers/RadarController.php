@@ -98,6 +98,7 @@ class RadarController extends Controller
 
         // Open paper positions: the "am I about to get stopped?" rail.
         $positions = SignalTrade::query()
+            ->where('book', 'legacy')
             ->whereIn('status', ['pending_entry', 'open'])
             ->with('ticker:id,symbol')
             ->orderByRaw("status = 'open' desc")

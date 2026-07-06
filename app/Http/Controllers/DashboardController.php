@@ -171,6 +171,7 @@ class DashboardController extends Controller
     protected function positions(): array
     {
         return SignalTrade::query()
+            ->where('book', 'legacy')
             ->whereIn('status', ['pending_entry', 'open'])
             ->with('ticker:id,symbol')
             ->orderByRaw("status = 'open' desc")

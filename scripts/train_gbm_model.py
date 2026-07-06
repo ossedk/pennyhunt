@@ -125,6 +125,11 @@ def main(csv_path: str, out_path: str) -> None:
     df["p_oos"] = walk_forward(df)
     oos = df.dropna(subset=["p_oos"])
 
+    # Persist per-event OOS scores so PHP can store them on backtest_events
+    # (exit-lab tier slicing must use out-of-sample probabilities — scoring
+    # a run with a model trained on it would flatter every tier).
+    oos[["id", "p_oos"]].to_csv(out_path.replace(".json", "_oos.csv"), index=False)
+
     # 2. Final model on everything.
     final = make_gbm().fit(df[FEATURES], df["hit"])
     trees, baseline = export_trees(final)
