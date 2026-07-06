@@ -7,6 +7,7 @@ use App\Models\Ticker;
 use App\Services\MarketData\EdgarClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Form 4 insider transactions (the bullish side of EDGAR): open-market
@@ -52,12 +53,27 @@ class SyncInsiderTrades extends Command
         $this->info("Syncing Form 4 data for {$tickers->count()} tickers");
 
         $totalStored = 0;
+        $failed = 0;
 
         foreach ($tickers as $i => $ticker) {
-            $stored = $this->syncTicker($edgar, $ticker);
-            $totalStored += $stored;
+            // One bad filing (numeric overflow, malformed XML) must never
+            // kill a multi-hour backfill — log, skip, continue.
+            try {
+                $stored = $this->syncTicker($edgar, $ticker);
+                $totalStored += $stored;
+            } catch (\Throwable $e) {
+                $failed++;
+                Log::warning("Form 4 sync failed for {$ticker->symbol}: {$e->getMessage()}");
+
+                continue;
+            }
 
             $this->output->write("\r  {$ticker->symbol}: {$stored} txns  [".($i + 1)."/{$tickers->count()}]   ");
+        }
+
+        if ($failed > 0) {
+            $this->output->writeln('');
+            $this->warn("{$failed} tickers failed (see log) — they retry next run.");
         }
 
         $this->output->writeln('');
@@ -92,6 +108,11 @@ class SyncInsiderTrades extends Command
             }
 
             foreach ($edgar->form4Transactions((int) $ticker->cik, $filing['accession'], $filing['primary_document']) as $txn) {
+                // Clamp against garbage filings: shares/price occasionally
+                // carry absurd values that overflow the decimal columns.
+                $shares = $txn['shares'] !== null ? min($txn['shares'], 99_999_999_999_999.0) : null;
+                $price = $txn['price'] !== null ? min($txn['price'], 99_999_999.0) : null;
+
                 InsiderTrade::query()->upsert([[
                     'ticker_id' => $ticker->id,
                     'accession' => $filing['accession'],
@@ -102,10 +123,10 @@ class SyncInsiderTrades extends Command
                     'is_officer' => $txn['is_officer'],
                     'is_director' => $txn['is_director'],
                     'code' => $txn['code'],
-                    'shares' => $txn['shares'],
-                    'price' => $txn['price'],
-                    'value' => $txn['shares'] !== null && $txn['price'] !== null
-                        ? round($txn['shares'] * $txn['price'], 2)
+                    'shares' => $shares,
+                    'price' => $price,
+                    'value' => $shares !== null && $price !== null
+                        ? min(round($shares * $price, 2), 99_999_999_999_999.0)
                         : null,
                     'created_at' => now(),
                     'updated_at' => now(),
