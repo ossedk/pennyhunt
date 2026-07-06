@@ -2,7 +2,8 @@ import { Head, Link } from '@inertiajs/react';
 import { ExternalLink, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HypeSwarm } from '@/components/pennyhunt/hype-swarm';
-import { swarm as signalSwarm } from '@/routes/signals';
+import { LiveDeskCard } from '@/components/pennyhunt/live-desk';
+import { live as signalLive, swarm as signalSwarm } from '@/routes/signals';
 import { MarketStatusBadge, relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
 import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { CandleChart    } from '@/components/pennyhunt/candle-chart';
@@ -115,6 +116,13 @@ type Props = {
     filingsSinceFire: { form: string; filed_at: string }[];
     posts: Post[];
     marketStatus: MarketStatus | null;
+    extendedQuote: {
+        price: number;
+        change_pct: number | null;
+        session: string;
+        as_of: string;
+        prev_close: number | null;
+    } | null;
 };
 
 const pct = (v: number | null | undefined, digits = 1) =>
@@ -139,6 +147,7 @@ export default function SignalCockpit({
     filingsSinceFire,
     posts,
     marketStatus,
+    extendedQuote,
 }: Props) {
     return (
         <>
@@ -157,6 +166,23 @@ export default function SignalCockpit({
                     </div>
                     <TierBadge confidence={signal.confidence} threshold={tradeTier?.calibrated_p ?? null} />
                     {trade && <TradeStatusBadge status={trade.status} />}
+                    {extendedQuote && (
+                        <Badge variant="outline" className="font-mono text-xs">
+                            {extendedQuote.session === 'early_hours'
+                                ? 'pre-mkt'
+                                : extendedQuote.session === 'after_hours'
+                                  ? 'after-hrs'
+                                  : 'live'}{' '}
+                            ${extendedQuote.price}
+                            {extendedQuote.change_pct !== null && (
+                                <span className={extendedQuote.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                    {' '}
+                                    {extendedQuote.change_pct >= 0 ? '+' : ''}
+                                    {(extendedQuote.change_pct * 100).toFixed(1)}%
+                                </span>
+                            )}
+                        </Badge>
+                    )}
                     <div className="ml-auto flex items-center gap-3">
                         <MarketStatusBadge market={marketStatus} />
                         <span className="text-xs text-muted-foreground">
@@ -212,6 +238,8 @@ export default function SignalCockpit({
                         hint="The validated discipline holds at most 5 sessions, then exits at the close."
                     />
                 </div>
+
+                <LiveDeskCard url={signalLive(signal.id).url} />
 
                 {signal.llm_brief && <SignalBriefCard brief={signal.llm_brief} />}
 

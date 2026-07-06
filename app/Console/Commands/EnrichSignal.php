@@ -3,10 +3,12 @@
 namespace App\Console\Commands;
 
 use App\Models\Signal;
+use App\Models\SignalModel;
 use App\Services\Features\LlmAggregates;
 use App\Services\Features\MarketIntelligence;
 use App\Services\Features\SectorHeat;
 use App\Services\Features\TechnicalFeatures;
+use App\Services\Ml\ConfidenceTrainer;
 use App\Services\Nlp\SignalBriefWriter;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -78,6 +80,50 @@ class EnrichSignal extends Command
         ])->save();
 
         $this->line('  breakdown upgraded: intel('.count($intel).') llm('.count($llm).') sector('.count($sector).') technicals('.count($technicals).')');
+
+        // Retro-score with the ACTIVE models using the as-of feature vector.
+        // Marked as retro in model_version — this is today's model looking
+        // back, not what fired at the time.
+        $inputs = data_get($signal->breakdown, 'inputs', []);
+        $gate = data_get($signal->breakdown, 'market_gate', []);
+
+        $features = ConfidenceTrainer::features([
+            'zscore' => (float) ($inputs['zscore_mentions'] ?? 0.0),
+            'volume_z' => $gate['volume_z'] ?? null,
+            'sentiment' => $inputs['weighted_sentiment'] ?? null,
+            'unique_authors' => (int) ($inputs['unique_authors'] ?? 0),
+            'mentions' => (int) ($inputs['mention_count'] ?? 0),
+            'pre_return_3d' => $gate['pre_return_3d'] ?? null,
+            'dollar_volume' => $gate['dollar_volume'] ?? null,
+            ...$technicals,
+            ...$intel,
+            ...$llm,
+            ...$sector,
+        ]);
+
+        $model = SignalModel::active();
+        $moonshot = SignalModel::activeMoonshot();
+
+        if ($model !== null) {
+            $confidence = $model->predict($features);
+            $moonshotP = $moonshot?->predict($features);
+
+            $signal->forceFill([
+                'confidence' => $confidence,
+                'model_version' => $model->version.' (retro)',
+                'breakdown' => [
+                    ...$signal->breakdown,
+                    'moonshot_p' => $moonshotP,
+                ],
+            ])->save();
+
+            $this->line(sprintf(
+                '  retro-scored: confidence %.3f (%s)%s',
+                $confidence,
+                $model->version,
+                $moonshotP !== null ? sprintf(', moonshot_p %.3f', $moonshotP) : '',
+            ));
+        }
 
         if (! $this->option('no-brief')) {
             $signal->forceFill(['llm_brief' => null])->save();

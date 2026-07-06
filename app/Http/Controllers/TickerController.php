@@ -18,6 +18,7 @@ use App\Models\Watchlist;
 use App\Services\Features\MarketIntelligence;
 use App\Services\Features\SectorHeat;
 use App\Services\Features\TechnicalFeatures;
+use App\Services\MarketData\ExtendedQuote;
 use App\Services\MarketData\MarketClock;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -208,6 +209,7 @@ class TickerController extends Controller
             'aggregatorHistory' => $aggregatorHistory,
             'signals' => $ticker->signals()->orderByDesc('fired_at')->limit(20)->get(),
             'marketStatus' => $clock->status(),
+            'extendedQuote' => app(ExtendedQuote::class)->get($ticker),
             'news' => TickerNews::query()
                 ->where('ticker_id', $ticker->id)
                 ->orderByDesc('published_at')

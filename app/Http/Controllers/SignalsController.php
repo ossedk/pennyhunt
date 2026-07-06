@@ -15,7 +15,9 @@ use App\Models\SignalModel;
 use App\Models\SignalTrade;
 use App\Models\TickerMetric;
 use App\Services\Features\MarketIntelligence;
+use App\Services\MarketData\ExtendedQuote;
 use App\Services\MarketData\MarketClock;
+use App\Services\Trading\LiveDesk;
 use Illuminate\Http\JsonResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -195,6 +197,7 @@ class SignalsController extends Controller
             'filingsSinceFire' => $filingsSinceFire,
             'posts' => $posts,
             'marketStatus' => $clock->status(),
+            'extendedQuote' => app(ExtendedQuote::class)->get($signal->ticker),
         ]);
     }
 
@@ -239,6 +242,12 @@ class SignalsController extends Controller
             'stop_level' => $entry !== null ? round($entry * 0.9, 4) : null,
             'time_exit_date' => $entryIdx !== null ? ($bars[$entryIdx + 5]['date'] ?? null) : null,
         ]);
+    }
+
+    /** Live enter/hold/exit assessment (rule-based, 60s cache). */
+    public function live(Signal $signal): JsonResponse
+    {
+        return response()->json(app(LiveDesk::class)->assess($signal));
     }
 
     /**

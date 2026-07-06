@@ -152,6 +152,13 @@ type Props = {
     }[];
     marketStatus: MarketStatus | null;
     isWatched: boolean;
+    extendedQuote: {
+        price: number;
+        change_pct: number | null;
+        session: string;
+        as_of: string;
+        prev_close: number | null;
+    } | null;
     news: {
         id: number;
         publisher: string | null;
@@ -250,6 +257,7 @@ export default function TickerShow({
     signals,
     marketStatus,
     isWatched,
+    extendedQuote,
     news,
 }: Props) {
     const toggleWatch = () => {
@@ -339,6 +347,24 @@ export default function TickerShow({
                                     >
                                         {dayChange >= 0 ? '+' : ''}
                                         {(dayChange * 100).toFixed(2)}%
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        {extendedQuote && extendedQuote.price !== lastPrice && (
+                            <div className="flex items-baseline gap-2 font-mono text-sm">
+                                <span className="text-[11px] tracking-wide text-muted-foreground uppercase">
+                                    {extendedQuote.session === 'early_hours'
+                                        ? 'pre-market'
+                                        : extendedQuote.session === 'after_hours'
+                                          ? 'after hours'
+                                          : 'live'}
+                                </span>
+                                <span className="text-foreground">${fmtSharePrice(extendedQuote.price)}</span>
+                                {extendedQuote.change_pct !== null && (
+                                    <span className={extendedQuote.change_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                        {extendedQuote.change_pct >= 0 ? '+' : ''}
+                                        {(extendedQuote.change_pct * 100).toFixed(2)}%
                                     </span>
                                 )}
                             </div>
