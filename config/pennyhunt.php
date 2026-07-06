@@ -175,6 +175,15 @@ return [
         'ON', 'ONE', 'OP', 'OPEN', 'OR', 'OTC', 'OUT', 'PC', 'PLAY', 'PM', 'POST', 'PT', 'PUMP',
         'REAL', 'RH', 'RIP', 'ROI', 'RUN', 'SAFE', 'SEC', 'SEE', 'SELL', 'SO', 'STAY', 'SUB', 'TA',
         'TWO', 'UK', 'UP', 'USA', 'VERY', 'WAY', 'WELL', 'WSB', 'YOLO', 'YOU',
+        // Trading slang & finance acronyms that read as bare "symbols" but
+        // almost never mean the ticker ("SL and TP", "3 DTE", "high OI").
+        // Not in the English wordlist (they're not dictionary words), so
+        // they need explicit listing. Cashtag ($TP) still counts.
+        'TP', 'SL', 'HOD', 'LOD', 'AH', 'FD', 'FDS', 'OI', 'IV', 'DTE', 'CSP', 'PMCC',
+        'PE', 'PB', 'MC', 'FA', 'PNL', 'NAV', 'YTD', 'QTD', 'GTC', 'AUM', 'CAGR',
+        'RSI', 'MACD', 'VWAP', 'EMA', 'SMA', 'ATR', 'ADX', 'OBV',
+        'CPI', 'PPI', 'FOMC', 'QE', 'QT', 'DXY', 'NFT', 'ICO', 'SPAC', 'ADR',
+        'NYSE', 'AMEX', 'IBKR', 'PFOF', 'HFT',
     ],
 
     /*

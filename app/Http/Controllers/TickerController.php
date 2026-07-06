@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\Ingestion\PullTwitterForTicker;
 use App\Jobs\Ingestion\SyncCompanyProfile;
 use App\Jobs\Ingestion\SyncTickerNews;
+use App\Jobs\Pipeline\ClassifyPostWithLlm;
 use App\Models\AggregatorSnapshot;
 use App\Models\AuthorLeaderboard;
 use App\Models\InsiderTrade;
@@ -55,7 +56,11 @@ class TickerController extends Controller
             ]);
 
         $posts = RawPost::query()
-            ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $ticker->id))
+            // Ambiguous symbols (TP, NOW, DD…) only count when the author
+            // wrote the explicit cashtag — bare-word matches on these are
+            // trading slang ("SL and TP"), not the stock.
+            ->whereHas('mentions', fn ($q) => $q->where('ticker_id', $ticker->id)
+                ->when($ticker->is_ambiguous, fn ($qq) => $qq->where('method', 'cashtag')))
             ->whereDoesntHave('sentiment', fn ($q) => $q->where('llm_off_topic', true))
             ->with([
                 'source:id,key,name',
@@ -64,8 +69,22 @@ class TickerController extends Controller
             ])
             ->orderByDesc('posted_at')
             ->limit(30)
-            ->get()
-            ->map(fn (RawPost $post): array => $this->postPayload($post));
+            ->get();
+
+        // A human is reading these exact posts: classify any that the LLM
+        // hasn't judged yet (relevance verdict prunes false mentions, the
+        // off_topic flag hides crypto collisions). Once per post ever —
+        // the cache guard survives page-view storms, the daily cap holds.
+        $posts->filter(fn (RawPost $post): bool => $post->sentiment?->llm_post_type === null)
+            ->take(30)
+            ->each(function (RawPost $post): void {
+                if (ClassifyPostWithLlm::underDailyCap()
+                    && cache()->add('classify-on-view:'.$post->id, 1, now()->addDays(7))) {
+                    ClassifyPostWithLlm::dispatch($post->id);
+                }
+            });
+
+        $posts = $posts->map(fn (RawPost $post): array => $this->postPayload($post));
 
         // X/Twitter confirmation feed: verified authors only, ranked by likes.
         // Empty until the Apify Twitter poller is enabled (paid plan).
