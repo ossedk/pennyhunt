@@ -47,32 +47,56 @@ class SyncSqueezeFuel extends Command
     /** @param array<string, int> $symbolMap */
     protected function syncShortInterest(SqueezeFuelClients $clients, array $symbolMap, int $months): void
     {
-        $this->info("Short interest: {$months} month(s)...");
+        $this->info("Short interest: {$months} month(s), two settlements each...");
 
         for ($m = 0; $m < $months; $m++) {
-            $from = now()->subMonths($m)->startOfMonth()->toDateString();
-            $to = now()->subMonths($m)->endOfMonth()->toDateString();
+            $anchor = now()->subMonths($m);
 
-            $rows = collect($clients->finraShortInterest($from, $to))
-                ->filter(fn (array $r): bool => isset($symbolMap[$r['symbol']]))
-                ->map(fn (array $r): array => [
-                    'ticker_id' => $symbolMap[$r['symbol']],
-                    'settlement_date' => $r['settlement_date'],
-                    'shares_short' => $r['shares_short'],
-                    'days_to_cover' => $r['days_to_cover'],
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+            // Two settlement periods per month: mid-month (~15th) and
+            // month-end. Exact dates shift around weekends/holidays —
+            // probe backwards from each anchor until data answers.
+            foreach (['mid', 'eom'] as $half) {
+                $base = $half === 'mid' ? $anchor->copy()->day(15) : $anchor->copy()->endOfMonth();
 
-            foreach ($rows->chunk(1000) as $chunk) {
-                DB::table('short_interest')->upsert(
-                    $chunk->all(),
-                    ['ticker_id', 'settlement_date'],
-                    ['shares_short', 'days_to_cover', 'updated_at'],
-                );
+                $candidates = [];
+
+                for ($d = 0; $d <= 4; $d++) {
+                    $candidates[] = $base->copy()->subDays($d)->toDateString();
+                }
+
+                $settlement = $clients->finraProbeSettlementDate($candidates);
+
+                if ($settlement === null) {
+                    continue; // not published yet (current period) or holiday cluster
+                }
+
+                if (DB::table('short_interest')->where('settlement_date', $settlement)->exists()) {
+                    continue; // already loaded
+                }
+
+                $rows = collect($clients->finraShortInterest($settlement))
+                    ->filter(fn (array $r): bool => isset($symbolMap[$r['symbol']]))
+                    ->map(fn (array $r): array => [
+                        'ticker_id' => $symbolMap[$r['symbol']],
+                        'settlement_date' => $r['settlement_date'],
+                        'shares_short' => $r['shares_short'],
+                        'days_to_cover' => $r['days_to_cover'],
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ])
+                    ->unique(fn (array $r): string => $r['ticker_id'].'|'.$r['settlement_date'])
+                    ->values();
+
+                foreach ($rows->chunk(1000) as $chunk) {
+                    DB::table('short_interest')->upsert(
+                        $chunk->all(),
+                        ['ticker_id', 'settlement_date'],
+                        ['shares_short', 'days_to_cover', 'updated_at'],
+                    );
+                }
+
+                $this->line("  {$settlement}: ".$rows->count().' rows');
             }
-
-            $this->line("  {$from}: ".$rows->count().' rows');
         }
     }
 
