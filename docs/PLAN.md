@@ -172,6 +172,22 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
+### Mention precision round 3: trading slang + SocialFi tokens (2026-07-06)
+
+"SL and TP" posts were counting as $TP mentions — trading slang (TP, SL,
+HOD, OI, DTE, RSI…) isn't in any dictionary so it slipped both the
+English-wordlist guard and the curated list. Fixes, all layers again:
+45 slang/finance-acronym tokens added to `ambiguous_symbols`
+(cashtag-only forever); ambiguous tickers' post feeds require explicit
+cashtags; ticker pages now dispatch LLM classification for any
+displayed-but-unjudged posts (once per post, cap-gated) so what humans
+read gets judged first; classifier prompt extended with SocialFi/
+engagement-farming tells ("claim 500 $X", launchpad @handles) and
+trading-slang usage; ticker context flags unlisted no-market-data
+shells as crypto-collision-prone (lean off_topic). Prod purge removed
+9,320 slang mentions + 60d metrics rebuild; the TP page went from 31
+false mentions to 0.
+
 ### Phase E — first results (2026-07-06)
 
 **Exit Lab shipped** (`pennyhunt:exit-lab`): re-simulates a run's fired
