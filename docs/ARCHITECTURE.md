@@ -306,6 +306,14 @@ GradeSignals → forward_return_1d/3d/5d via market_bars (Yahoo, keyless)
 - **Moonshot radar** (`moonshot_scans`): the live engine records every scored
   candidate (p, fired, blocking gate); the Desk shows best-per-ticker over
   24h. Write-on-scan, read-on-render — no scoring at page load.
+- **Intraday charts** (signal + ticker pages, 1D/1H/5m toggle): daily bars
+  ship with the page; 1H/5m come on demand from Polygon range aggregates
+  (`/signals/{id}/intraday`, `/tickers/{symbol}/intraday`, 5-min cache) incl.
+  pre/after-market. Bar epochs are pre-shifted to ET wall-clock server-side
+  (`App\Support\ChartBars`) because lightweight-charts renders UTCTimestamps
+  verbatim — the axis reads 09:30 ET as a trader expects. Signal fires,
+  entries and exits are marked at their exact times, snapped client-side to
+  the nearest bar.
 
 ## Frontend map
 
