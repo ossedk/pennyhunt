@@ -20,6 +20,7 @@ use App\Services\MarketData\YahooMarketData;
 use App\Services\Ml\ConfidenceTrainer;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Composite signal scoring (v1, heuristic weights).
@@ -188,20 +189,24 @@ class SignalEngine
             return null;
         }
 
-        // Entry gates from the validated cell.
+        // Price cap exits immediately — mega-caps have no radar value.
         if ($market['close'] > (float) $config['max_entry_price']) {
             return null;
         }
 
+        // Remaining gates: blocked candidates are still scored + recorded
+        // below so the Desk radar sees what's brewing near the band.
+        $blockedBy = null;
+
         if ($market['pre_return_3d'] !== null && $market['pre_return_3d'] > (float) $config['max_pre_run']) {
-            return null;
+            $blockedBy = 'pre_run';
         }
 
         $intelFeatures = $intel->features($ticker->id, $today);
 
-        if ($intelFeatures['smallcap_rel_20d'] !== null
+        if ($blockedBy === null && $intelFeatures['smallcap_rel_20d'] !== null
             && $intelFeatures['smallcap_rel_20d'] < (float) $config['min_smallcap_rel']) {
-            return null; // dead small-cap regime — stand down
+            $blockedBy = 'regime'; // dead small-cap regime — stand down
         }
 
         $llmFeatures = $llm->features($ticker->id, $today);
@@ -227,7 +232,22 @@ class SignalEngine
 
         // Band gate, not a floor: scores above max_p are the chaser tail
         // (0 hits in the top band on both validation runs).
-        if ($moonshotP < (float) $config['min_p'] || $moonshotP >= (float) ($config['max_p'] ?? 1.0)) {
+        if ($blockedBy === null && ($moonshotP < (float) $config['min_p'] || $moonshotP >= (float) ($config['max_p'] ?? 1.0))) {
+            $blockedBy = $moonshotP < (float) $config['min_p'] ? 'below_band' : 'above_band';
+        }
+
+        // Radar trail: every scored candidate, fired or blocked.
+        DB::table('moonshot_scans')->insert([
+            'ticker_id' => $ticker->id,
+            'p' => round($moonshotP, 6),
+            'fired' => $blockedBy === null,
+            'blocked_by' => $blockedBy,
+            'scanned_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        if ($blockedBy !== null) {
             return null;
         }
 

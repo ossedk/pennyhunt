@@ -8,6 +8,7 @@ use App\Models\MarketBar;
 use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\SignalTrade;
+use App\Support\AlertMailer;
 use App\Support\AnalyticsGate;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -46,10 +47,26 @@ class TradeEngine
                     'tier' => 'moonshot',
                     'confidence_at_entry' => $signal->confidence,
                     'model_version' => $signal->model_version,
+                    // Fixed-risk lottery ticket, NOT Kelly: sized so a full
+                    // loss costs ~the ticket and the winner pays for many.
+                    'kelly_fraction' => (float) config('pennyhunt.moonshot.ticket_fraction'),
                 ],
             );
 
             TradeUpdated::dispatch($trade, 'created');
+
+            if ($trade->wasRecentlyCreated) {
+                AlertMailer::send(
+                    "Moonshot fire: {$signal->ticker->symbol}",
+                    [
+                        sprintf('The moonshot head fired on $%s (p %.2f, band gate passed).', $signal->ticker->symbol, (float) data_get($signal->breakdown, 'moonshot_p')),
+                        'Paper entry at the next session open, fixed-risk ticket '.(config('pennyhunt.moonshot.ticket_fraction') * 100).'% — no stop, day-5 exit.',
+                    ],
+                    url("/signals/{$signal->id}"),
+                    'Open the signal',
+                    "moonshot-fire:{$signal->id}",
+                );
+            }
 
             return $trade;
         }
@@ -83,6 +100,19 @@ class TradeEngine
             TradeUpdated::dispatch($trade, 'created');
 
             $primary ??= $trade;
+        }
+
+        if ($primary !== null && $primary->wasRecentlyCreated) {
+            AlertMailer::send(
+                "Trade-tier signal: {$signal->ticker->symbol}",
+                [
+                    sprintf('$%s fired at %.1f%% model probability (trade tier).', $signal->ticker->symbol, (float) $signal->confidence * 100),
+                    'Paper entries queued on the legacy and phase-E books at the next session open.',
+                ],
+                url("/signals/{$signal->id}"),
+                'Open the signal',
+                "tier-fire:{$signal->id}",
+            );
         }
 
         return $primary;

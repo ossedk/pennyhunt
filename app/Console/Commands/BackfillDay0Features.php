@@ -20,6 +20,7 @@ class BackfillDay0Features extends Command
     protected $signature = 'pennyhunt:backfill-day0
         {--run= : Backtest run id (default: latest done)}
         {--min-moonshot=0.03 : Include events with moonshot_confidence >= this}
+        {--entry-day : Backfill the ENTRY session opening range instead of the signal day}
         {--limit=0 : Cap ticker-days processed this run (0 = all)}';
 
     protected $description = 'Backfill first-30-minute microstructure features onto tradeable backtest events';
@@ -36,33 +37,43 @@ class BackfillDay0Features extends Command
             ? (int) $this->option('run')
             : (int) DB::table('backtest_runs')->where('status', 'done')->orderByDesc('id')->value('id');
 
+        $entryDay = (bool) $this->option('entry-day');
+
         $events = BacktestEvent::query()
             ->where('backtest_run_id', $runId)
-            ->whereNull('or_return_30m')
+            ->whereNull($entryDay ? 'entry_or_return' : 'or_return_30m')
+            ->when($entryDay, fn ($q) => $q->whereNotNull('entry_date'))
             ->where(fn ($q) => $q
                 ->where('fired', true)
                 ->orWhere('moonshot_confidence', '>=', (float) $this->option('min-moonshot')))
             ->orderBy('day')
             ->when((int) $this->option('limit') > 0, fn ($q) => $q->limit((int) $this->option('limit')))
-            ->get(['id', 'ticker_id', 'symbol', 'day']);
+            ->get(['id', 'ticker_id', 'symbol', 'day', 'entry_date']);
 
-        $this->info("Run #{$runId}: ".$events->count().' events need day-0 features.');
+        $this->info("Run #{$runId}: ".$events->count().' events need '.($entryDay ? 'entry-day OR' : 'day-0').' features.');
 
         // Prior close + trailing avg volume per (ticker, day) from daily bars.
         $done = 0;
 
         foreach ($events as $event) {
-            $context = $this->dailyContext($event->ticker_id, $event->day->toDateString());
-            $minutes = $polygon->minuteBars($event->symbol, $event->day->toDateString());
+            $targetDay = $entryDay ? $event->entry_date->toDateString() : $event->day->toDateString();
+            $context = $this->dailyContext($event->ticker_id, $targetDay);
+            $minutes = $polygon->minuteBars($event->symbol, $targetDay);
 
             $features = Day0Features::compute($minutes, $context['prev_close'], $context['avg_volume']);
 
-            BacktestEvent::query()->whereKey($event->id)->update([
-                'or_return_30m' => $features['or_return_30m'],
-                'vwap_dist_30m' => $features['vwap_dist_30m'],
-                'or_vol_share' => $features['or_vol_share'],
-                'gap_faded' => $features['gap_faded'],
-            ]);
+            BacktestEvent::query()->whereKey($event->id)->update($entryDay
+                ? [
+                    'entry_or_return' => $features['or_return_30m'],
+                    'entry_vwap_dist' => $features['vwap_dist_30m'],
+                    'entry_gap_faded' => $features['gap_faded'],
+                ]
+                : [
+                    'or_return_30m' => $features['or_return_30m'],
+                    'vwap_dist_30m' => $features['vwap_dist_30m'],
+                    'or_vol_share' => $features['or_vol_share'],
+                    'gap_faded' => $features['gap_faded'],
+                ]);
 
             $done++;
             $this->output->write("\r  {$done}/{$events->count()}   ");

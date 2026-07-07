@@ -6,6 +6,7 @@ use App\Models\AlertEvent;
 use App\Models\SecFiling;
 use App\Models\SignalTrade;
 use App\Models\TickerMetric;
+use App\Support\AlertMailer;
 
 /**
  * System-generated risk alerts for open paper positions — the "should I
@@ -143,5 +144,23 @@ class TradeAlerts
                 ...$context,
             ],
         ]);
+
+        $labels = [
+            'trade_stop_proximity' => 'price is near the stop',
+            'trade_time_exit_next' => 'time exit is next session',
+            'trade_new_filing' => 'new dilution filing since entry',
+            'trade_mention_collapse' => 'mention flow collapsed',
+        ];
+
+        AlertMailer::send(
+            sprintf('%s: %s', $trade->ticker->symbol, $labels[$kind] ?? $kind),
+            [
+                sprintf('Open %s-book position in $%s: %s.', $trade->book, $trade->ticker->symbol, $labels[$kind] ?? $kind),
+                'Context: '.json_encode($context),
+            ],
+            $trade->signal_id !== null ? url("/signals/{$trade->signal_id}") : url('/signals'),
+            'Open the position',
+            "trade-alert:{$trade->id}:{$kind}",
+        );
     }
 }

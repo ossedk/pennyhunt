@@ -4,6 +4,7 @@ use App\Jobs\Backtesting\RunBacktest;
 use App\Jobs\Ingestion\PollApeWisdom;
 use App\Jobs\Ingestion\PollRedditSubreddit;
 use App\Jobs\Ingestion\PollRedditViaApify;
+use App\Jobs\Ingestion\PollStocktwits;
 use App\Jobs\Ingestion\PollTradeHalts;
 use App\Jobs\Ingestion\PollTradestie;
 use App\Jobs\Ingestion\PollTwitterViaApify;
@@ -18,6 +19,7 @@ use App\Jobs\Nlp\GenerateMarketBrief;
 use App\Jobs\Signals\ComputeSignals;
 use App\Jobs\Signals\GradeSignals;
 use App\Jobs\Trading\ManageSignalTrades;
+use App\Jobs\Trading\MonitorLiveDesk;
 use App\Jobs\Trading\RefreshOpenTradeQuotes;
 use App\Models\BacktestRun;
 use App\Models\Source;
@@ -149,6 +151,21 @@ Schedule::job(new PollTradeHalts)
     ->weekdays()
     ->between('12:00', '22:00')
     ->name('poll-trade-halts')
+    ->onOneServer();
+
+// Stocktwits candidate flow (Phase G): trending + loud-ticker streams.
+Schedule::job(new PollStocktwits)
+    ->everyFifteenMinutes()
+    ->name('poll-stocktwits')
+    ->onOneServer();
+
+// LiveDesk monitor: mails when a held position's verdict flips into an
+// action state (exit / exit today / caution). Transitions only.
+Schedule::job(new MonitorLiveDesk)
+    ->everyFifteenMinutes()
+    ->weekdays()
+    ->between('12:00', '22:00')
+    ->name('monitor-live-desk')
     ->onOneServer();
 
 /*

@@ -129,6 +129,7 @@ type Paginated<T> = {
 type ModelRow = {
     id: number;
     version: string;
+    role: string;
     backtest_run_id: number | null;
     is_active: boolean;
     train_events: number | null;
@@ -138,6 +139,7 @@ type ModelRow = {
     base_rate: number | null;
     oos_events: number | null;
     trade_tier: { raw_p: number; calibrated_p: number } | null;
+    auc: number | null;
 };
 
 type Props = {
@@ -307,10 +309,11 @@ function ModelRegistry({ models }: { models: ModelRow[] }) {
                     <TableHeader>
                         <TableRow>
                             <TableHead>Version</TableHead>
+                            <TableHead>Role</TableHead>
                             <TableHead>Trained on</TableHead>
                             <TableHead className="text-right">Train events</TableHead>
                             <TableHead className="text-right">OOS events</TableHead>
-                            <TableHead className="text-right">Brier ↓</TableHead>
+                            <TableHead className="text-right">Brier ↓ / AUC ↑</TableHead>
                             <TableHead className="text-right">Edge vs base</TableHead>
                             <TableHead className="text-right">Trade tier p≥</TableHead>
                             <TableHead>Status</TableHead>
@@ -326,6 +329,24 @@ function ModelRegistry({ models }: { models: ModelRow[] }) {
                             return (
                                 <TableRow key={m.id}>
                                     <TableCell className="font-mono text-xs">{m.version}</TableCell>
+                                    <TableCell>
+                                        <Badge
+                                            variant="outline"
+                                            className={cn(
+                                                'text-[10px]',
+                                                m.role === 'moonshot'
+                                                    ? 'border-amber-500/40 text-amber-400'
+                                                    : 'text-muted-foreground',
+                                            )}
+                                            title={
+                                                m.role === 'moonshot'
+                                                    ? 'P(+75% in 5 sessions) — fires model-first signals in the band gate'
+                                                    : 'P(+30% in 5 sessions) — scores signals, sets the trade tier and Kelly sizing'
+                                            }
+                                        >
+                                            {m.role === 'moonshot' ? 'moonshot head' : 'confidence'}
+                                        </Badge>
+                                    </TableCell>
                                     <TableCell className="text-xs text-muted-foreground">
                                         run #{m.backtest_run_id} · {m.created_at.slice(0, 10)}
                                     </TableCell>
@@ -336,7 +357,11 @@ function ModelRegistry({ models }: { models: ModelRow[] }) {
                                         {m.oos_events?.toLocaleString() ?? '—'}
                                     </TableCell>
                                     <TableCell className="text-right font-mono text-xs">
-                                        {m.brier !== null ? m.brier.toFixed(5) : '—'}
+                                        {m.brier !== null
+                                            ? m.brier.toFixed(5)
+                                            : m.auc !== null
+                                              ? `AUC ${m.auc.toFixed(3)}`
+                                              : '—'}
                                     </TableCell>
                                     <TableCell
                                         className={cn(

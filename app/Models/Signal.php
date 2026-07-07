@@ -4,11 +4,17 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Signal extends Model
 {
     protected $guarded = [];
+
+    public function trades(): HasMany
+    {
+        return $this->hasMany(SignalTrade::class);
+    }
 
     protected function casts(): array
     {

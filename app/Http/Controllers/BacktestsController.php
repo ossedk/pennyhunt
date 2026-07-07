@@ -63,6 +63,7 @@ class BacktestsController extends Controller
                 ->map(fn (SignalModel $m): array => [
                     'id' => $m->id,
                     'version' => $m->version,
+                    'role' => $m->role,
                     'backtest_run_id' => $m->backtest_run_id,
                     'is_active' => $m->is_active,
                     'train_events' => $m->train_events,
@@ -72,6 +73,7 @@ class BacktestsController extends Controller
                     'base_rate' => $m->metrics['base_rate'] ?? null,
                     'oos_events' => $m->metrics['oos_events'] ?? null,
                     'trade_tier' => $m->metrics['trade_tier'] ?? null,
+                    'auc' => $m->metrics['auc'] ?? null,
                 ]),
         ]);
     }

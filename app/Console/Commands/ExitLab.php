@@ -31,7 +31,9 @@ class ExitLab extends Command
         {--max-price= : Only events with entry at/below this price}
         {--min-smallcap-rel= : Regime throttle: require smallcap_rel_20d >= this (e.g. -0.02)}
         {--min-moonshot= : Only events with moonshot_confidence >= this}
+        {--max-moonshot= : Only events with moonshot_confidence below this}
         {--min-meta= : Only events with meta_confidence >= this}
+        {--entry-confirmed : Only events whose ENTRY-day opening range confirmed (above VWAP, gap held)}
         {--cooldown=10 : Per-ticker sessions between taken trades (candidate mode)}';
 
     protected $description = 'Grid-test exit disciplines over a run\'s fired trades';
@@ -86,9 +88,13 @@ class ExitLab extends Command
             ->when($this->option('max-price') !== null, fn ($q) => $q->where('entry', '<=', (float) $this->option('max-price')))
             ->when($this->option('min-smallcap-rel') !== null, fn ($q) => $q->where('smallcap_rel_20d', '>=', (float) $this->option('min-smallcap-rel')))
             ->when($this->option('min-moonshot') !== null, fn ($q) => $q->where('moonshot_confidence', '>=', (float) $this->option('min-moonshot')))
+            ->when($this->option('max-moonshot') !== null, fn ($q) => $q->where('moonshot_confidence', '<', (float) $this->option('max-moonshot')))
             ->when($this->option('min-meta') !== null, fn ($q) => $q->where('meta_confidence', '>=', (float) $this->option('min-meta')))
+            ->when($this->option('entry-confirmed'), fn ($q) => $q
+                ->where('entry_vwap_dist', '>=', 0)
+                ->where(fn ($qq) => $qq->whereNull('entry_gap_faded')->orWhere('entry_gap_faded', false)))
             ->orderBy('day')
-            ->get(['id', 'ticker_id', 'day', 'entry_date', 'entry', 'atr_pct', 'dollar_volume', 'mentions']);
+            ->get(['id', 'ticker_id', 'day', 'entry_date', 'entry', 'atr_pct', 'dollar_volume', 'mentions', 'entry_or_return']);
 
         // Per-ticker cooldown: candidate days cluster on runners — entering
         // the same ticker on consecutive days pseudo-replicates one move.
@@ -150,9 +156,15 @@ class ExitLab extends Command
                     continue;
                 }
 
+                // Entry-confirmed mode fills at the 10:00 price, not the
+                // 9:30 open — confirmation isn't free, you pay the OR move.
+                $entry = $this->option('entry-confirmed') && $event->entry_or_return !== null
+                    ? $bars[0]['open'] * (1 + (float) $event->entry_or_return)
+                    : $bars[0]['open'];
+
                 $result = $simulator->simulate(
                     $config,
-                    $bars[0]['open'],
+                    $entry,
                     $signalCloses[$event->ticker_id][$event->day] ?? 0.0,
                     $event->atr_pct !== null ? min((float) $event->atr_pct, 1.0) : null,
                     $bars,

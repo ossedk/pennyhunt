@@ -46,6 +46,8 @@ class DashboardController extends Controller
                 'market_ret_5d' => $regime['market_ret_5d'],
                 'btc_ret_5d' => $regime['btc_ret_5d'],
                 'site_mention_z' => $regime['site_mention_z'],
+                'smallcap_rel_20d' => $regime['smallcap_rel_20d'],
+                'xbi_ret_5d' => $regime['xbi_ret_5d'],
             ],
             'movers' => $this->movers(),
             'loudest' => $this->loudest(),
@@ -53,7 +55,58 @@ class DashboardController extends Controller
             'positions' => $this->positions(),
             'recentSignals' => $this->recentSignals(),
             'news' => $this->topNews(),
+            'moonshotRadar' => $this->moonshotRadar(),
+            'recentHalts' => $this->recentHalts(),
         ]);
+    }
+
+    /**
+     * What the moonshot head is watching: the strongest score per ticker
+     * over the last 24h of engine scans — fires, near-misses and the gate
+     * that blocked each. Forward visibility instead of after-the-fact.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function moonshotRadar(): array
+    {
+        // Portable best-score-per-ticker (blocked_by approximated by MAX —
+        // good enough for a radar chip).
+        return DB::table('moonshot_scans as s')
+            ->join('tickers as t', 't.id', '=', 's.ticker_id')
+            ->where('s.scanned_at', '>=', now()->subDay())
+            ->groupBy('s.ticker_id', 't.symbol', 't.name')
+            ->selectRaw('t.symbol, t.name, MAX(s.p) as p, MAX(CASE WHEN s.fired THEN 1 ELSE 0 END) as fired, MAX(s.blocked_by) as blocked_by, MAX(s.scanned_at) as scanned_at')
+            ->orderByDesc('p')
+            ->limit(12)
+            ->get()
+            ->map(fn (object $r): array => [
+                'symbol' => $r->symbol,
+                'name' => $r->name,
+                'p' => (float) $r->p,
+                'fired' => (bool) $r->fired,
+                'blocked_by' => $r->blocked_by,
+                'scanned_at' => (string) $r->scanned_at,
+            ])
+            ->all();
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    protected function recentHalts(): array
+    {
+        return DB::table('trade_halts as h')
+            ->leftJoin('tickers as t', 't.id', '=', 'h.ticker_id')
+            ->where('h.halted_at', '>=', now()->subDay())
+            ->orderByDesc('h.halted_at')
+            ->limit(10)
+            ->get(['h.symbol', 't.name', 'h.halted_at', 'h.resumed_at', 'h.reason'])
+            ->map(fn (object $r): array => [
+                'symbol' => $r->symbol,
+                'name' => $r->name,
+                'halted_at' => (string) $r->halted_at,
+                'resumed_at' => $r->resumed_at !== null ? (string) $r->resumed_at : null,
+                'reason' => $r->reason,
+            ])
+            ->all();
     }
 
     /**

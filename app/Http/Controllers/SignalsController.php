@@ -90,6 +90,7 @@ class SignalsController extends Controller
             'closed' => $closed,
             'signals' => $signals,
             'scoreboard' => $this->scoreboard(),
+            'books' => $this->books(),
             'tradeTier' => SignalModel::active()?->metrics['trade_tier'] ?? null,
             'tradeAlerts' => $tradeAlerts,
             'marketStatus' => $clock->status(),
@@ -371,6 +372,39 @@ class SignalsController extends Controller
             'stop_rate' => $n > 0 ? round((clone $closed)->where('exit_reason', 'stop')->count() / $n, 3) : null,
             'avg_confidence' => $n > 0 ? round((float) (clone $closed)->avg('confidence_at_entry'), 4) : null,
         ];
+    }
+
+    /**
+     * Per-book forward race: legacy (validated v3) vs phase_e (crowd-exit)
+     * vs moonshot (model-first lottery tickets) — same market, different
+     * disciplines. This is the panel that eventually decides which
+     * discipline earns real capital.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function books(): array
+    {
+        return collect(['legacy', 'phase_e', 'moonshot'])->map(function (string $book): array {
+            $closed = SignalTrade::query()->where('book', $book)->where('status', 'closed');
+            $n = (clone $closed)->count();
+
+            return [
+                'book' => $book,
+                'open' => SignalTrade::query()->where('book', $book)->whereIn('status', ['pending_entry', 'open'])->count(),
+                'cancelled' => SignalTrade::query()->where('book', $book)->where('status', 'cancelled')->count(),
+                'closed' => $n,
+                'win_rate' => $n > 0 ? round((clone $closed)->where('net_return', '>', 0)->count() / $n, 3) : null,
+                'avg_net' => $n > 0 ? round((float) (clone $closed)->avg('net_return'), 4) : null,
+                'total_net' => $n > 0 ? round((float) (clone $closed)->sum('net_return'), 4) : null,
+                // Equity curve of $1 compounded per closed trade, in order.
+                'curve' => (clone $closed)->orderBy('exit_date')->pluck('net_return')
+                    ->reduce(function (array $carry, $net): array {
+                        $carry[] = round(end($carry) * (1 + (float) $net), 4);
+
+                        return $carry;
+                    }, [1.0]),
+            ];
+        })->all();
     }
 
     /**

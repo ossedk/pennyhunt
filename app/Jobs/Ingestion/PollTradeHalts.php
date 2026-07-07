@@ -4,6 +4,7 @@ namespace App\Jobs\Ingestion;
 
 use App\Models\Ticker;
 use App\Services\MarketData\SqueezeFuelClients;
+use App\Support\AlertMailer;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -53,6 +54,33 @@ class PollTradeHalts implements ShouldBeUnique, ShouldQueue
 
         foreach (array_chunk($rows, 200) as $chunk) {
             DB::table('trade_halts')->upsert($chunk, ['symbol', 'halted_at'], ['resumed_at', 'reason', 'ticker_id', 'updated_at']);
+        }
+
+        // A halt on a name we hold is an immediate risk event — mail it.
+        $heldTickerIds = DB::table('signal_trades')
+            ->whereIn('status', ['pending_entry', 'open'])
+            ->pluck('ticker_id')
+            ->unique()
+            ->flip();
+
+        foreach ($halts as $halt) {
+            $tickerId = $symbolMap[$halt['symbol']] ?? null;
+
+            if ($tickerId === null || ! isset($heldTickerIds[$tickerId])) {
+                continue;
+            }
+
+            AlertMailer::send(
+                "HALT: {$halt['symbol']} (position held)",
+                [
+                    sprintf('$%s was halted at %s UTC (%s)%s.', $halt['symbol'], $halt['halted_at'], $halt['reason'] ?? 'no code', $halt['resumed_at'] !== null ? ', resumed '.$halt['resumed_at'] : ' — not yet resumed'),
+                    'You hold an open paper position in this name.',
+                ],
+                url('/signals'),
+                'Open positions',
+                'halt:'.$halt['symbol'].':'.$halt['halted_at'],
+                dedupeHours: 24,
+            );
         }
     }
 }

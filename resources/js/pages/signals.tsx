@@ -80,6 +80,16 @@ type Props = {
     tradeTier: { raw_p: number; calibrated_p: number } | null;
     tradeAlerts: TradeAlert[];
     marketStatus: MarketStatus | null;
+    books: {
+        book: string;
+        open: number;
+        cancelled: number;
+        closed: number;
+        win_rate: number | null;
+        avg_net: number | null;
+        total_net: number | null;
+        curve: number[];
+    }[];
 };
 
 const ALERT_LABELS: Record<string, { label: string; tone: string }> = {
@@ -100,7 +110,7 @@ const returnColor = (v: number | null | undefined) =>
 
 type Tab = 'positions' | 'history' | 'log';
 
-export default function Signals({ positions, closed, signals: signalPage, scoreboard, tradeTier, tradeAlerts, marketStatus }: Props) {
+export default function Signals({ positions, closed, signals: signalPage, scoreboard, tradeTier, tradeAlerts, marketStatus, books }: Props) {
     const [tab, setTab] = useState<Tab>(positions.length > 0 ? 'positions' : 'log');
 
     // Live refresh on trade lifecycle broadcasts (entry fills, exits, quotes).
@@ -145,6 +155,64 @@ export default function Signals({ positions, closed, signals: signalPage, scoreb
                         hint="Backtest tier: ~45% hit the -10% stop"
                     />
                 </div>
+
+                {/* ── The books race: three disciplines, same market ─────── */}
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-1.5 text-sm">
+                            Books — forward race
+                            <InfoTip>
+                                Three paper disciplines trade the same signals in parallel: legacy (10% stop, day-5
+                                exit — the v3 baseline), phase_e (no stop, crowd-collapse exit, day-10 cap, no-chase
+                                veto), and moonshot (model-first fires, no stop, day-5, fixed-risk tickets). The one
+                                with the best forward record earns real capital.
+                            </InfoTip>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Book</TableHead>
+                                    <TableHead className="text-right">Open</TableHead>
+                                    <TableHead className="text-right">Closed</TableHead>
+                                    <TableHead className="text-right">Win rate</TableHead>
+                                    <TableHead className="text-right">Avg net</TableHead>
+                                    <TableHead className="text-right">Total net</TableHead>
+                                    <TableHead className="text-right">$1 grows to</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {books.map((b) => (
+                                    <TableRow key={b.book}>
+                                        <TableCell className="font-mono text-xs font-semibold">
+                                            {b.book}
+                                            {b.cancelled > 0 && (
+                                                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                                                    ({b.cancelled} vetoed)
+                                                </span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono text-xs">{b.open}</TableCell>
+                                        <TableCell className="text-right font-mono text-xs">{b.closed}</TableCell>
+                                        <TableCell className="text-right font-mono text-xs">
+                                            {b.win_rate !== null ? `${(b.win_rate * 100).toFixed(0)}%` : '—'}
+                                        </TableCell>
+                                        <TableCell className={cn('text-right font-mono text-xs', returnColor(b.avg_net))}>
+                                            {pct(b.avg_net)}
+                                        </TableCell>
+                                        <TableCell className={cn('text-right font-mono text-xs', returnColor(b.total_net))}>
+                                            {pct(b.total_net)}
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono text-xs">
+                                            {b.curve.length > 1 ? `$${b.curve[b.curve.length - 1].toFixed(2)}` : '—'}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
 
                 {/* ── Position risk alerts ──────────────────────────────── */}
                 {tradeAlerts.length > 0 && (

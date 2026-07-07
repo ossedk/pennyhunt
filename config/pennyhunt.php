@@ -100,6 +100,12 @@ return [
         'trakstocks',
         'SqueezePlays',
         'OTCstocks',
+        // Phase G candidate-flow expansion (statistical power).
+        'pennystocksDD',
+        'Biotechplays',
+        '10xPennyStocks',
+        'StocksAndTrading',
+        'squeeze_stocks',
     ],
 
     // SEC fair-access policy requires identifying UA: "App Name contact@email"
@@ -235,6 +241,16 @@ return [
     | no chasing, tradeable price band, small-cap regime alive. Trades go
     | to the 'moonshot' paper book (no stop, day-5 time exit).
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Alert delivery (email)
+    |--------------------------------------------------------------------------
+    */
+    'alerts' => [
+        // Falls back to the first user's email when unset.
+        'email' => env('PENNYHUNT_ALERT_EMAIL'),
+    ],
+
     'moonshot' => [
         'enabled' => (bool) env('PENNYHUNT_MOONSHOT', true),
         'min_p' => (float) env('PENNYHUNT_MOONSHOT_MIN_P', 0.15),
@@ -247,6 +263,10 @@ return [
         'min_smallcap_rel' => -0.03,
         // Per-ticker refire cooldown (the lab used a 10-session cooldown).
         'cooldown_days' => 14,
+        // Fixed-risk ticket per trade (fraction of account). The band is a
+        // 1-in-N lottery profile: portfolio sims show it dies under
+        // concentrated slots and survives under small tickets.
+        'ticket_fraction' => (float) env('PENNYHUNT_MOONSHOT_TICKET', 0.03),
     ],
 
     'signals' => [

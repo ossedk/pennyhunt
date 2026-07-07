@@ -89,6 +89,8 @@ type Props = {
         market_ret_5d: number | null;
         btc_ret_5d: number | null;
         site_mention_z: number | null;
+        smallcap_rel_20d: number | null;
+        xbi_ret_5d: number | null;
     };
     movers: Mover[];
     loudest: Loud[];
@@ -96,6 +98,21 @@ type Props = {
     positions: Position[];
     recentSignals: RecentSignal[];
     news: NewsItem[];
+    moonshotRadar: {
+        symbol: string;
+        name: string | null;
+        p: number;
+        fired: boolean;
+        blocked_by: string | null;
+        scanned_at: string;
+    }[];
+    recentHalts: {
+        symbol: string;
+        name: string | null;
+        halted_at: string;
+        resumed_at: string | null;
+        reason: string | null;
+    }[];
 };
 
 const pct = (v: number | null | undefined, digits = 1) =>
@@ -117,6 +134,8 @@ export default function Dashboard({
     positions,
     recentSignals,
     news,
+    moonshotRadar,
+    recentHalts,
 }: Props) {
     return (
         <>
@@ -142,7 +161,9 @@ export default function Dashboard({
                     </div>
 
                     <div className="flex flex-col gap-4">
+                        <MoonshotRadarCard radar={moonshotRadar} />
                         <PositionsCard positions={positions} signals={recentSignals} />
+                        {recentHalts.length > 0 && <HaltsCard halts={recentHalts} />}
                         <NewsCard news={news} />
                     </div>
                 </div>
@@ -225,10 +246,95 @@ function RegimeStrip({ regime }: { regime: Props['regime'] }) {
             <Stat label="S&P 5d" value={pct(regime.market_ret_5d)} accent={returnColor(regime.market_ret_5d)} />
             <Stat label="BTC 5d" value={pct(regime.btc_ret_5d)} accent={returnColor(regime.btc_ret_5d)} />
             <Stat
+                label="Small-caps"
+                value={pct(regime.smallcap_rel_20d)}
+                accent={returnColor(regime.smallcap_rel_20d)}
+            />
+            <Stat label="XBI 5d" value={pct(regime.xbi_ret_5d)} accent={returnColor(regime.xbi_ret_5d)} />
+            <Stat
                 label="Buzz"
                 value={regime.site_mention_z !== null ? `${regime.site_mention_z >= 0 ? '+' : ''}${regime.site_mention_z.toFixed(1)}σ` : '—'}
             />
         </div>
+    );
+}
+
+const BLOCK_LABELS: Record<string, string> = {
+    pre_run: 'chasing veto',
+    regime: 'regime dead',
+    below_band: 'below band',
+    above_band: 'above band (chaser)',
+};
+
+/** What the moonshot head is watching: fires + near-misses, last 24h. */
+function MoonshotRadarCard({ radar }: { radar: Props['moonshotRadar'] }) {
+    return (
+        <Card>
+            <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-1.5 text-sm">
+                    Moonshot radar
+                    <InfoTip>
+                        The strongest moonshot-head score per ticker over the last 24 hours of engine scans
+                        (P(+75% in 5 sessions), walk-forward validated). Fires enter the band [15%, 25%) with all
+                        gates green; the rest show which gate blocked them — your forward watchlist.
+                    </InfoTip>
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-1">
+                {radar.length === 0 ? (
+                    <p className="py-3 text-center text-xs text-muted-foreground">
+                        No scans yet this session — the engine records every scored candidate here.
+                    </p>
+                ) : (
+                    radar.map((r) => (
+                        <Link
+                            key={r.symbol}
+                            href={tickerShow(r.symbol)}
+                            className="flex items-center justify-between rounded-md px-2 py-1 text-sm hover:bg-accent"
+                        >
+                            <span className="font-mono font-semibold">{r.symbol}</span>
+                            <span className="flex items-center gap-2">
+                                <span className="font-mono text-xs">{(r.p * 100).toFixed(1)}%</span>
+                                {r.fired ? (
+                                    <Badge className="bg-amber-500/15 text-[10px] text-amber-500">FIRED</Badge>
+                                ) : (
+                                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                        {BLOCK_LABELS[r.blocked_by ?? ''] ?? r.blocked_by ?? 'watch'}
+                                    </Badge>
+                                )}
+                            </span>
+                        </Link>
+                    ))
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+
+function HaltsCard({ halts }: { halts: Props['recentHalts'] }) {
+    return (
+        <Card>
+            <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-1.5 text-sm">
+                    Trade halts — 24h
+                    <InfoTip>
+                        LULD volatility and regulatory halts (NASDAQ Trader feed, all US venues). Halts are the
+                        signature of parabolic small-cap moves.
+                    </InfoTip>
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-1">
+                {halts.map((h, i) => (
+                    <div key={i} className="flex items-center justify-between px-2 py-1 text-xs">
+                        <span className="font-mono font-semibold">{h.symbol}</span>
+                        <span className="text-muted-foreground">
+                            {h.reason ?? '—'} · {new Date(h.halted_at + 'Z').toLocaleTimeString()}
+                            {h.resumed_at === null && <span className="ml-1 text-rose-400">HALTED</span>}
+                        </span>
+                    </div>
+                ))}
+            </CardContent>
+        </Card>
     );
 }
 
