@@ -6,14 +6,14 @@ import { LiveDeskCard } from '@/components/pennyhunt/live-desk';
 import { live as signalLive, swarm as signalSwarm } from '@/routes/signals';
 import { MarketStatusBadge, relativeTime, TierBadge, TradeStatusBadge } from '@/components/pennyhunt/badges';
 import type { MarketStatus } from '@/components/pennyhunt/badges';
-import { CandleChart    } from '@/components/pennyhunt/candle-chart';
-import type {ChartLevel, ChartMarker, OhlcBar} from '@/components/pennyhunt/candle-chart';
+import { CandleChart, IntervalToggle } from '@/components/pennyhunt/candle-chart';
+import type { ChartInterval, ChartLevel, ChartMarker, OhlcBar } from '@/components/pennyhunt/candle-chart';
 import { InfoTip } from '@/components/pennyhunt/info-tip';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { signals } from '@/routes';
-import { bars as signalBars } from '@/routes/signals';
+import { bars as signalBars, intraday as signalIntraday } from '@/routes/signals';
 import { show as tickerShow } from '@/routes/tickers';
 
 type Trade = {
@@ -453,10 +453,18 @@ type SignalBarsResponse = {
     time_exit_date: string | null;
 };
 
+type IntradayResponse = {
+    bars: OhlcBar[];
+    markers: { time: number; label: string; color: string }[];
+};
+
 function CockpitChart({ signalId, trade }: { signalId: number; trade: Trade | null; firedAt: string }) {
-    const [data, setData] = useState<SignalBarsResponse | null>(null);
+    const [interval, setInterval] = useState<ChartInterval>('1h');
+    const [daily, setDaily] = useState<SignalBarsResponse | null>(null);
+    const [intraday, setIntraday] = useState<Partial<Record<'1h' | '5m', IntradayResponse>>>({});
     const [error, setError] = useState(false);
 
+    // Daily payload always loads (it carries entry/stop levels for every view).
     useEffect(() => {
         let cancelled = false;
 
@@ -464,7 +472,7 @@ function CockpitChart({ signalId, trade }: { signalId: number; trade: Trade | nu
             .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
             .then((json: SignalBarsResponse) => {
                 if (!cancelled) {
-                    setData(json);
+                    setDaily(json);
                 }
             })
             .catch(() => {
@@ -478,33 +486,93 @@ function CockpitChart({ signalId, trade }: { signalId: number; trade: Trade | nu
         };
     }, [signalId]);
 
+    // Intraday payloads load on demand, once per interval.
+    useEffect(() => {
+        if (interval === '1d' || intraday[interval] !== undefined) {
+            return;
+        }
+
+        let cancelled = false;
+        const key = interval;
+
+        fetch(signalIntraday(signalId, { query: { interval: key } }).url, { headers: { Accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+            .then((json: IntradayResponse) => {
+                if (!cancelled) {
+                    setIntraday((prev) => ({ ...prev, [key]: json }));
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setError(true);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [interval, signalId, intraday]);
+
     if (error) {
         return <p className="py-8 text-center text-sm text-muted-foreground">Could not load price data.</p>;
     }
 
-    if (data === null) {
+    if (daily === null || (interval !== '1d' && intraday[interval] === undefined)) {
         return <p className="py-8 text-center text-sm text-muted-foreground">Loading price data…</p>;
     }
 
-    const firedBarDate = [...data.bars].reverse().find((bar) => bar.date <= data.fired_date)?.date ?? data.fired_date;
-
-    const markers: ChartMarker[] = [
-        { date: firedBarDate, label: 'fired', color: '#f59e0b' },
-        ...(trade?.entry_date ?? data.entry_date
-            ? [{ date: (trade?.entry_date ?? data.entry_date)!, label: 'entry', color: '#10b981' }]
-            : []),
-        ...(trade?.exit_date ? [{ date: trade.exit_date, label: `exit (${trade.exit_reason})`, color: '#f43f5e' }] : []),
-    ];
-
-    const entry = trade?.entry_price ?? data.entry;
-    const stop = trade?.stop_price ?? data.stop_level;
+    const entry = trade?.entry_price ?? daily.entry;
+    const stop = trade?.stop_price ?? daily.stop_level;
 
     const levels: ChartLevel[] = [
         ...(entry !== null ? [{ value: entry, label: 'entry', color: '#10b981' }] : []),
         ...(stop !== null ? [{ value: stop, label: '-10% stop', color: '#ef4444' }] : []),
     ];
 
-    return <CandleChart bars={data.bars} markers={markers} levels={levels} height={320} defaultRange="All" />;
+    let bars: OhlcBar[];
+    let markers: ChartMarker[];
+
+    if (interval === '1d') {
+        const firedBarDate = [...daily.bars].reverse().find((bar) => bar.date <= daily.fired_date)?.date ?? daily.fired_date;
+
+        bars = daily.bars;
+        markers = [
+            { date: firedBarDate, label: 'fired', color: '#f59e0b' },
+            ...(trade?.entry_date ?? daily.entry_date
+                ? [{ date: (trade?.entry_date ?? daily.entry_date)!, label: 'entry', color: '#10b981' }]
+                : []),
+            ...(trade?.exit_date ? [{ date: trade.exit_date, label: `exit (${trade.exit_reason})`, color: '#f43f5e' }] : []),
+        ];
+    } else {
+        const payload = intraday[interval]!;
+
+        bars = payload.bars;
+        markers = payload.markers;
+    }
+
+    return (
+        <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">
+                    {interval === '1d'
+                        ? 'Daily bars — the trade discipline plays out on this resolution.'
+                        : interval === '1h'
+                          ? 'Hourly bars incl. pre/after-market — the fire is marked at its exact hour.'
+                          : '5-minute tape around the fire — 3 days before to 10 days after.'}
+                </span>
+                <IntervalToggle value={interval} onChange={setInterval} />
+            </div>
+            <CandleChart
+                key={interval}
+                bars={bars}
+                markers={markers}
+                levels={levels}
+                height={320}
+                defaultRange="All"
+                intraday={interval !== '1d'}
+            />
+        </div>
+    );
 }
 
 /* ── Decision checklist ─────────────────────────────────────────────── */

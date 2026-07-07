@@ -17,7 +17,9 @@ use App\Models\TickerMetric;
 use App\Services\Features\MarketIntelligence;
 use App\Services\MarketData\ExtendedQuote;
 use App\Services\MarketData\MarketClock;
+use App\Services\MarketData\PolygonClient;
 use App\Services\Trading\LiveDesk;
+use App\Support\ChartBars;
 use Illuminate\Http\JsonResponse;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -243,6 +245,70 @@ class SignalsController extends Controller
             'stop_level' => $entry !== null ? round($entry * 0.9, 4) : null,
             'time_exit_date' => $entryIdx !== null ? ($bars[$entryIdx + 5]['date'] ?? null) : null,
         ]);
+    }
+
+    /**
+     * Intraday bars (5m / 1h) around the fire so the post-signal move is
+     * visible at tape resolution — with the fire minute marked. Polygon
+     * range aggregates, ET wall-clock times, short cache.
+     */
+    public function intraday(Signal $signal): JsonResponse
+    {
+        $interval = request()->query('interval') === '5m' ? '5m' : '1h';
+
+        // 5m: tight window around the fire (tape detail); 1h: the full
+        // trade arc. Both end at "now or fire+N days", whichever is first.
+        [$multiplier, $timespan, $daysBefore, $daysAfter] = $interval === '5m'
+            ? [5, 'minute', 3, 10]
+            : [1, 'hour', 10, 30];
+
+        $from = $signal->fired_at->copy()->subDays($daysBefore)->toDateString();
+        $to = $signal->fired_at->copy()->addDays($daysAfter)->min(now())->toDateString();
+
+        $ttl = $signal->fired_at->gt(now()->subDays($daysAfter)) ? 300 : 21600;
+
+        $payload = cache()->remember(
+            "intraday:signal:{$signal->id}:{$interval}:{$to}",
+            $ttl,
+            function () use ($signal, $multiplier, $timespan, $from, $to): array {
+                $bars = ChartBars::fromPolygon(
+                    app(PolygonClient::class)
+                        ->rangeAggregates($signal->ticker->symbol, $multiplier, $timespan, $from, $to),
+                );
+
+                $trade = $signal->trades()->where('book', 'legacy')->first();
+
+                $markers = collect([
+                    ['time' => ChartBars::toEastern($signal->fired_at->getTimestamp()), 'label' => 'fired', 'color' => '#f59e0b'],
+                ]);
+
+                if ($trade?->entry_date !== null) {
+                    // Fills happen at the session open of the entry date.
+                    $markers->push([
+                        'time' => ChartBars::toEastern(strtotime($trade->entry_date->toDateString().' 09:30:00 America/New_York')),
+                        'label' => 'entry '.number_format((float) $trade->entry_price, 2),
+                        'color' => '#10b981',
+                    ]);
+                }
+
+                if ($trade?->exit_date !== null) {
+                    $markers->push([
+                        'time' => ChartBars::toEastern(strtotime($trade->exit_date->toDateString().' 16:00:00 America/New_York')),
+                        'label' => 'exit ('.$trade->exit_reason.')',
+                        'color' => '#f43f5e',
+                    ]);
+                }
+
+                return [
+                    'symbol' => $signal->ticker->symbol,
+                    'interval' => request()->query('interval') === '5m' ? '5m' : '1h',
+                    'bars' => $bars,
+                    'markers' => $markers->all(),
+                ];
+            },
+        );
+
+        return response()->json($payload);
     }
 
     /** Live enter/hold/exit assessment (rule-based, 60s cache). */

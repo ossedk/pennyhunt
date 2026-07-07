@@ -10,14 +10,18 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { useEffect, useState } from 'react';
 import { MarketStatusBadge, PumpRiskBadge, relativeTime, SentimentBadge } from '@/components/pennyhunt/badges';
 import type { MarketStatus } from '@/components/pennyhunt/badges';
 import { CandleChart } from '@/components/pennyhunt/candle-chart';
-import type { OhlcBar } from '@/components/pennyhunt/candle-chart';
+import type { ChartMarker, OhlcBar } from '@/components/pennyhunt/candle-chart';
 import { InfoTip } from '@/components/pennyhunt/info-tip';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { radar } from '@/routes';
+import { IntervalToggle } from '@/components/pennyhunt/candle-chart';
+import type { ChartInterval } from '@/components/pennyhunt/candle-chart';
+import { intraday as tickerIntraday } from '@/routes/tickers';
 import { destroy as watchlistDestroy, store as watchlistStore } from '@/routes/watchlists';
 
 type SeriesPoint = {
@@ -389,19 +393,7 @@ export default function TickerShow({
                 </div>
 
                 {/* ── Price chart ────────────────────────────────────────── */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-sm">
-                            Price & volume{' '}
-                            <span className="font-normal text-muted-foreground">
-                                (daily OHLC, orange arrows mark fired signals)
-                            </span>
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <CandleChart bars={bars} markers={signalMarkers} height={380} />
-                    </CardContent>
-                </Card>
+                <TickerChartCard symbol={ticker.symbol} bars={bars} dailyMarkers={signalMarkers} />
 
                 {/* ── Company + model features ───────────────────────────── */}
                 <div className="grid gap-4 xl:grid-cols-3">
@@ -1122,3 +1114,79 @@ export default function TickerShow({
 TickerShow.layout = {
     breadcrumbs: [{ title: 'Radar', href: radar() }],
 };
+
+type IntradayPayload = {
+    bars: OhlcBar[];
+    markers: { time: number; label: string; color: string }[];
+};
+
+/**
+ * Price chart with a 1D / 1H / 5m interval switcher. Daily bars come with
+ * the page; intraday bars are fetched on demand from Polygon (1H covers a
+ * quarter, 5m two trading weeks) with signal fires marked at their exact
+ * time.
+ */
+function TickerChartCard({ symbol, bars, dailyMarkers }: { symbol: string; bars: OhlcBar[]; dailyMarkers: ChartMarker[] }) {
+    const [interval, setInterval] = useState<ChartInterval>('1d');
+    const [intraday, setIntraday] = useState<Partial<Record<'1h' | '5m', IntradayPayload>>>({});
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        if (interval === '1d' || intraday[interval] !== undefined) {
+            return;
+        }
+
+        let cancelled = false;
+        const key = interval;
+
+        fetch(tickerIntraday(symbol, { query: { interval: key } }).url, { headers: { Accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+            .then((json: IntradayPayload) => {
+                if (!cancelled) {
+                    setIntraday((prev) => ({ ...prev, [key]: json }));
+                }
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setError(true);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [interval, symbol, intraday]);
+
+    const payload = interval !== '1d' ? intraday[interval] : undefined;
+
+    return (
+        <Card>
+            <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="text-sm">
+                        Price & volume{' '}
+                        <span className="font-normal text-muted-foreground">
+                            {interval === '1d'
+                                ? '(daily OHLC, orange arrows mark fired signals)'
+                                : interval === '1h'
+                                  ? '(hourly incl. pre/after-market, ~3 months — fires marked at their exact hour)'
+                                  : '(5-minute tape incl. pre/after-market, ~2 weeks)'}
+                        </span>
+                    </CardTitle>
+                    <IntervalToggle value={interval} onChange={setInterval} />
+                </div>
+            </CardHeader>
+            <CardContent>
+                {interval === '1d' ? (
+                    <CandleChart key="1d" bars={bars} markers={dailyMarkers} height={380} />
+                ) : error ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Could not load intraday data.</p>
+                ) : payload === undefined ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">Loading intraday bars…</p>
+                ) : (
+                    <CandleChart key={interval} bars={payload.bars} markers={payload.markers} height={380} intraday />
+                )}
+            </CardContent>
+        </Card>
+    );
+}

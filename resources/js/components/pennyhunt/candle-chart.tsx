@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 
 export type OhlcBar = {
     date: string; // Y-m-d
+    time?: number; // epoch seconds (ET wall-clock) — present on intraday bars
     open: number;
     high: number;
     low: number;
@@ -26,7 +27,8 @@ export type OhlcBar = {
 };
 
 export type ChartMarker = {
-    date: string;
+    date?: string; // daily charts: marker on the session bar
+    time?: number; // intraday charts: epoch seconds, snapped to nearest bar
     label: string;
     color: string;
 };
@@ -36,6 +38,35 @@ export type ChartLevel = {
     label: string;
     color: string;
 };
+
+export type ChartInterval = '1d' | '1h' | '5m';
+
+const INTERVALS: { key: ChartInterval; label: string }[] = [
+    { key: '1d', label: '1D' },
+    { key: '1h', label: '1H' },
+    { key: '5m', label: '5m' },
+];
+
+/** Interval switcher shared by the signal cockpit and ticker charts. */
+export function IntervalToggle({ value, onChange }: { value: ChartInterval; onChange: (v: ChartInterval) => void }) {
+    return (
+        <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
+            {INTERVALS.map((i) => (
+                <button
+                    key={i.key}
+                    type="button"
+                    onClick={() => onChange(i.key)}
+                    className={cn(
+                        'rounded px-2 py-0.5 font-mono text-xs transition-colors',
+                        value === i.key ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                >
+                    {i.label}
+                </button>
+            ))}
+        </div>
+    );
+}
 
 const RANGES = [
     { key: '1M', days: 31 },
@@ -51,6 +82,30 @@ const UP = '#10b981';
 const DOWN = '#f43f5e';
 
 const toTime = (date: string): UTCTimestamp => (Date.parse(date + 'T00:00:00Z') / 1000) as UTCTimestamp;
+
+const barTime = (bar: OhlcBar): UTCTimestamp => (bar.time !== undefined ? (bar.time as UTCTimestamp) : toTime(bar.date));
+
+/** Snap an epoch marker to the nearest bar time (intraday markers rarely land exactly on a bar boundary). */
+function snapToBar(time: number, barTimes: number[]): number | null {
+    if (barTimes.length === 0) {
+        return null;
+    }
+
+    let best = barTimes[0];
+    let bestDist = Math.abs(barTimes[0] - time);
+
+    for (const t of barTimes) {
+        const dist = Math.abs(t - time);
+
+        if (dist < bestDist) {
+            best = t;
+            bestDist = dist;
+        }
+    }
+
+    // Don't paint markers wildly outside the loaded window (> 3 days off).
+    return bestDist <= 3 * 86400 ? best : null;
+}
 
 function priceDecimals(price: number): number {
     if (price >= 100) {
@@ -69,6 +124,17 @@ return 3;
 }
 
 const fmtPrice = (v: number) => v.toFixed(priceDecimals(v));
+
+/** Legend label: date for daily bars, date + ET time for intraday bars. */
+function legendLabel(bar: OhlcBar): string {
+    if (bar.time === undefined) {
+        return bar.date;
+    }
+
+    const d = new Date(bar.time * 1000);
+
+    return `${bar.date} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} ET`;
+}
 
 const fmtVolume = (v: number) => {
     if (v >= 1e9) {
@@ -108,12 +174,14 @@ export function CandleChart({
     levels = [],
     height = 380,
     defaultRange = '6M',
+    intraday = false,
 }: {
     bars: OhlcBar[];
     markers?: ChartMarker[];
     levels?: ChartLevel[];
     height?: number;
     defaultRange?: RangeKey;
+    intraday?: boolean;
 }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -125,7 +193,7 @@ export function CandleChart({
         const map = new Map<number, { bar: OhlcBar; prevClose: number | null }>();
 
         bars.forEach((bar, i) => {
-            map.set(toTime(bar.date) as number, { bar, prevClose: i > 0 ? bars[i - 1].close : null });
+            map.set(barTime(bar) as number, { bar, prevClose: i > 0 ? bars[i - 1].close : null });
         });
 
         return map;
@@ -164,9 +232,21 @@ return;
             },
             timeScale: {
                 borderColor: 'rgba(255,255,255,0.08)',
-                timeVisible: false,
+                timeVisible: intraday,
+                secondsVisible: false,
                 rightOffset: 3,
             },
+            localization: intraday
+                ? {
+                      // Bar epochs are pre-shifted to ET wall-clock server-side;
+                      // render them verbatim (UTC getters) so 09:30 stays 09:30.
+                      timeFormatter: (t: number) => {
+                          const d = new Date(t * 1000);
+
+                          return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} ET`;
+                      },
+                  }
+                : {},
             // Full trader interactions: wheel zoom, drag to pan, pinch on
             // touch, drag the price/time axes to scale either dimension.
             handleScroll: {
@@ -207,7 +287,7 @@ return;
 
         candles.setData(
             bars.map((bar) => ({
-                time: toTime(bar.date),
+                time: barTime(bar),
                 open: bar.open,
                 high: bar.high,
                 low: bar.low,
@@ -217,24 +297,39 @@ return;
 
         volume.setData(
             bars.map((bar) => ({
-                time: toTime(bar.date),
+                time: barTime(bar),
                 value: bar.volume,
                 color: bar.close >= bar.open ? 'rgba(16,185,129,0.28)' : 'rgba(244,63,94,0.28)',
             })),
         );
 
         const barDates = new Set(bars.map((bar) => bar.date));
+        const barTimes = bars.map((bar) => barTime(bar) as number);
+
         const seriesMarkers: SeriesMarker<Time>[] = markers
-            .filter((marker) => barDates.has(marker.date))
-            .sort((a, b) => a.date.localeCompare(b.date))
-            .map((marker) => ({
-                time: toTime(marker.date),
-                position: 'aboveBar',
-                color: marker.color,
-                shape: 'arrowDown',
-                text: marker.label,
-                size: 1,
-            }));
+            .map((marker): SeriesMarker<Time> | null => {
+                const time =
+                    marker.time !== undefined
+                        ? snapToBar(marker.time, barTimes)
+                        : marker.date !== undefined && barDates.has(marker.date)
+                          ? (toTime(marker.date) as number)
+                          : null;
+
+                if (time === null) {
+                    return null;
+                }
+
+                return {
+                    time: time as UTCTimestamp,
+                    position: 'aboveBar',
+                    color: marker.color,
+                    shape: 'arrowDown',
+                    text: marker.label,
+                    size: 1,
+                };
+            })
+            .filter((m): m is SeriesMarker<Time> => m !== null)
+            .sort((a, b) => (a.time as number) - (b.time as number));
 
         if (seriesMarkers.length > 0) {
             createSeriesMarkers(candles, seriesMarkers);
@@ -262,7 +357,7 @@ return;
             }
 
             setLegend({
-                date: hit.bar.date,
+                date: legendLabel(hit.bar),
                 open: hit.bar.open,
                 high: hit.bar.high,
                 low: hit.bar.low,
@@ -281,7 +376,7 @@ return;
             candleRef.current = null;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [bars, markers, levels, height]);
+    }, [bars, markers, levels, height, intraday]);
 
     // Apply the selected range as a visible window over the loaded data.
     useEffect(() => {
@@ -290,6 +385,12 @@ return;
         if (!chart || bars.length === 0) {
 return;
 }
+
+        if (intraday) {
+            chart.timeScale().fitContent();
+
+            return;
+        }
 
         const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
 
@@ -304,7 +405,7 @@ return;
         const firstVisible = bars.find((bar) => Date.parse(bar.date + 'T00:00:00Z') >= fromTs) ?? bars[0];
 
         chart.timeScale().setVisibleRange({ from: toTime(firstVisible.date), to: toTime(last) });
-    }, [range, bars]);
+    }, [range, bars, intraday]);
 
     if (bars.length === 0) {
         return <p className="py-8 text-center text-sm text-muted-foreground">No price data for this window.</p>;
@@ -312,7 +413,7 @@ return;
 
     const latest = bars[bars.length - 1];
     const shown = legend ?? {
-        date: latest.date,
+        date: legendLabel(latest),
         open: latest.open,
         high: latest.high,
         low: latest.low,
@@ -355,21 +456,22 @@ return;
                         scroll to zoom · drag to pan · double-click axis to reset
                     </span>
                     <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
-                        {RANGES.map((r) => (
-                            <button
-                                key={r.key}
-                                type="button"
-                                onClick={() => setRange(r.key)}
-                                className={cn(
-                                    'rounded px-2 py-0.5 font-mono text-xs transition-colors',
-                                    range === r.key
-                                        ? 'bg-secondary text-foreground'
-                                        : 'text-muted-foreground hover:text-foreground',
-                                )}
-                            >
-                                {r.key}
-                            </button>
-                        ))}
+                        {!intraday &&
+                            RANGES.map((r) => (
+                                <button
+                                    key={r.key}
+                                    type="button"
+                                    onClick={() => setRange(r.key)}
+                                    className={cn(
+                                        'rounded px-2 py-0.5 font-mono text-xs transition-colors',
+                                        range === r.key
+                                            ? 'bg-secondary text-foreground'
+                                            : 'text-muted-foreground hover:text-foreground',
+                                    )}
+                                >
+                                    {r.key}
+                                </button>
+                            ))}
                         <button
                             type="button"
                             onClick={() => {

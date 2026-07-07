@@ -67,12 +67,25 @@ class PolygonClient
      */
     public function minuteBars(string $symbol, string $date): array
     {
+        return $this->rangeAggregates($symbol, 1, 'minute', $date, $date);
+    }
+
+    /**
+     * Arbitrary aggregate bars over a date range (regular + extended
+     * session) — powers the intraday charts (5-min / hourly).
+     *
+     * @return array<int, array{t: int, o: float, h: float, l: float, c: float, v: float}>
+     */
+    public function rangeAggregates(string $symbol, int $multiplier, string $timespan, string $from, string $to): array
+    {
         $response = $this->get(sprintf(
-            '/v2/aggs/ticker/%s/range/1/minute/%s/%s',
+            '/v2/aggs/ticker/%s/range/%d/%s/%s/%s',
             rawurlencode(strtoupper($symbol)),
-            $date,
-            $date,
-        ), ['adjusted' => 'true', 'sort' => 'asc', 'limit' => 5000]);
+            $multiplier,
+            $timespan,
+            $from,
+            $to,
+        ), ['adjusted' => 'true', 'sort' => 'asc', 'limit' => 50000]);
 
         return array_map(fn (array $bar): array => [
             't' => (int) $bar['t'],

@@ -20,11 +20,60 @@ use App\Services\Features\SectorHeat;
 use App\Services\Features\TechnicalFeatures;
 use App\Services\MarketData\ExtendedQuote;
 use App\Services\MarketData\MarketClock;
+use App\Services\MarketData\PolygonClient;
+use App\Support\ChartBars;
+use Illuminate\Http\JsonResponse;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class TickerController extends Controller
 {
+    /**
+     * Intraday bars (5m / 1h) for the ticker chart, with every signal fire
+     * in the window marked at its exact time. ET wall-clock, short cache.
+     */
+    public function intraday(string $symbol): JsonResponse
+    {
+        $ticker = Ticker::query()->where('symbol', strtoupper($symbol))->firstOrFail();
+        $interval = request()->query('interval') === '5m' ? '5m' : '1h';
+
+        // 5m: two trading weeks of tape; 1h: a quarter.
+        [$multiplier, $timespan, $days] = $interval === '5m' ? [5, 'minute', 14] : [1, 'hour', 92];
+
+        $payload = cache()->remember(
+            "intraday:ticker:{$ticker->id}:{$interval}",
+            300,
+            function () use ($ticker, $interval, $multiplier, $timespan, $days): array {
+                $from = now()->subDays($days)->toDateString();
+
+                $bars = ChartBars::fromPolygon(
+                    app(PolygonClient::class)
+                        ->rangeAggregates($ticker->symbol, $multiplier, $timespan, $from, now()->toDateString()),
+                );
+
+                $markers = $ticker->signals()
+                    ->where('fired_at', '>=', now()->subDays($days))
+                    ->orderBy('fired_at')
+                    ->get(['fired_at', 'origin'])
+                    ->map(fn ($signal): array => [
+                        'time' => ChartBars::toEastern($signal->fired_at->getTimestamp()),
+                        'label' => $signal->origin === 'model' ? 'moonshot fire' : 'fired',
+                        'color' => '#f59e0b',
+                    ])
+                    ->all();
+
+                return [
+                    'symbol' => $ticker->symbol,
+                    'interval' => $interval,
+                    'bars' => $bars,
+                    'markers' => $markers,
+                ];
+            },
+        );
+
+        return response()->json($payload);
+    }
+
     public function show(string $symbol, MarketClock $clock): Response
     {
         $ticker = Ticker::query()->where('symbol', strtoupper($symbol))->firstOrFail();
