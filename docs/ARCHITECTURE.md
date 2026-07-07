@@ -292,6 +292,20 @@ GradeSignals → forward_return_1d/3d/5d via market_bars (Yahoo, keyless)
   Signals broadcast individually (low volume).
 - **Raw posts partitioning** is deferred: plain table + composite indexes are
   fine at validation scale; revisit at ~10M rows (documented tradeoff, plan §2).
+- **Paper books** (`signal_trades.book`): three parallel forward-test
+  disciplines per market — `legacy` (10% stop, day-5 exit; the UI's primary
+  ledger), `phase_e` (no stop, crowd-collapse exit, day-10 cap, no-chase veto)
+  and `moonshot` (model-first fires, no stop, day-5, 3% fixed-risk tickets +
+  entry-day opening-range confirmation with 10:00 fills). The Signals-page
+  books table is the race; the winner earns real capital.
+- **Email alerts** (`App\Support\AlertMailer` → `PennyhuntAlert` mailable):
+  fires, trade risk alerts, halts on held names, LiveDesk verdict flips
+  (15-min `MonitorLiveDesk` job). Per-key cache dedupe; recipient
+  `PENNYHUNT_ALERT_EMAIL` (fallback: first user). Requires real `MAIL_*`
+  SMTP creds in prod — currently `log`.
+- **Moonshot radar** (`moonshot_scans`): the live engine records every scored
+  candidate (p, fired, blocking gate); the Desk shows best-per-ticker over
+  24h. Write-on-scan, read-on-render — no scoring at page load.
 
 ## Frontend map
 

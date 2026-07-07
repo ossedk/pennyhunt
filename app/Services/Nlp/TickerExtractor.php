@@ -95,7 +95,9 @@ class TickerExtractor
             $found[$symbol] = ['confidence' => 1.0, 'method' => 'cashtag'];
         }
 
-        if ($sourceType === 'twitter') {
+        // Shout-heavy platforms: cashtags only. Stocktwits mentions arrive
+        // via structured symbol tags in the ingestor anyway.
+        if ($sourceType === 'twitter' || $sourceType === 'stocktwits') {
             return $found;
         }
 

@@ -172,7 +172,66 @@ Dark theme by default (shadcn/ui `dark` class strategy, near-black background `#
 
 ## 7. Roadmap
 
-### Phase G (NEXT) — statistical power, ticket sizing, and the actionable cockpit (planned 2026-07-06)
+### Phase G — SHIPPED 2026-07-07 (email alerts instead of Telegram, per user)
+
+Prerequisites confirmed before execution: LLM classification backfill
+complete (145,558 posts classified, **0 remaining** on run-36 candidate
+days); insider Form 4 sync at 64,778 transactions (15,143 open-market
+buys) across 5,023 tickers, remainder syncing. `gbm-v2026-07-06-run36.17`
+**activated** as the confidence model (edge +4.8%); moonshot head
+run36.3 (AUC 0.855) already live.
+
+**1. Ticket sizing — the lottery math validated.** `pennyhunt:portfolio-sim`
+walks a cell's trades chronologically compounding $100k under slot vs
+fixed-ticket sizing. Run 36, moonshot cell (14 trades): slots LOSE
+(1 slot −70%, 3 slots −7.7%/DD 45%); **fixed tickets survive and win**
+(3% ticket +1.1%/DD 5%, 10% ticket +2.0%/DD 16%). Phase-E cell
+(46 trades): 5 slots +30.6%/DD 39% vs 10% tickets +22.4%/DD 21%.
+Conclusion encoded in the engine: moonshot book trades now carry a 3%
+fixed-risk `kelly_fraction` (`PENNYHUNT_MOONSHOT_TICKET`).
+
+**2. Registry + books race.** Model registry shows role badges
+(confidence vs moonshot head) and AUC for heads. Signals page gains the
+three-book forward race table (open/closed/win rate/avg net/$1 curve)
+— the panel that decides which discipline earns real capital.
+
+**3. Candidate flow.** Stocktwits ingestion live: trending stream + the
+10 loudest tickers' symbol streams every 15 min (~44 req/hr, no auth).
+Structured symbol tags become cashtag-tier mentions (≤6 per message —
+tag-spam guard); posts flow through the normal LLM/sentiment pipeline.
+First prod pull: 312 posts / 498 mentions. Five subreddits added
+(pennystocksDD, Biotechplays, 10xPennyStocks, StocksAndTrading,
+squeeze_stocks). The engine already fires every 5 minutes — cadence was
+never the bottleneck.
+
+**4. Entry confirmation — VALIDATED, live on the moonshot book.**
+Backfilled 2,401 ENTRY-day opening ranges (the day-0 columns describe
+the signal day; the fill happens the next morning). Lab with honest
+10:00 fills (`--entry-confirmed`, entry = open × (1+OR)):
+- Moonshot cell: n=14 → 6 confirmed; no-stop/5d **+25.5% net (PF 2.9)**
+  vs +6.4% unconfirmed. n tiny, halves −9%/+60% — directional.
+- Composite cell (the stronger evidence): n=254 → 101; avg exit +1.8% →
+  **+3.5%**, PF 0.94 → **1.10**. The filter helps in BOTH cells.
+Live rule shipped: moonshot fills require first-30m above VWAP + no gap
+fade, and fill at the 10:00 price; tape veto cancels (`or_veto`);
+missing minute data falls back to the open fill (never veto on absent
+evidence).
+
+**5. Email alerts** (`PennyhuntAlert` mailable + `AlertMailer`, per-key
+dedupe, recipient `PENNYHUNT_ALERT_EMAIL` → first user fallback):
+tier + moonshot fires, trade risk alerts (stop proximity, time exit,
+filings, mention collapse), halts on held names, and LiveDesk verdict
+flips into action states via the new 15-min `MonitorLiveDesk` job.
+⚠️ Prod `MAIL_MAILER=log` — alerts write to the log until SMTP creds
+(Resend/Postmark/SES) land in `.env`.
+
+**6. Desk upgrades.** Moonshot radar card: the engine records EVERY
+scored candidate to `moonshot_scans` (p, fired, blocking gate); the
+Desk shows the best score per ticker over 24h — fires and near-misses,
+forward-looking. Halts card (last 24h) and small-caps/XBI regime chips
+round out the strip.
+
+### Phase G original plan (2026-07-06)
 
 **The honest moonshot P&L (run 36, live gate config, $100k).** Band
 [0.15, 0.25) + no-chase + ≤$5 + regime + per-ticker cooldown, no-stop/

@@ -10,6 +10,7 @@ use App\Models\Source;
 use App\Models\Ticker;
 use App\Services\Trading\TradeEngine;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
 
@@ -116,6 +117,66 @@ it('routes model-origin signals to the moonshot book without a tier gate', funct
 
     expect($trade->refresh()->status)->toBe('open')
         ->and($trade->stop_price)->toBeNull();
+});
+
+it('moonshot book fills at the 10:00 price when the opening range confirms', function () {
+    tradeModel();
+    $signal = tradeSignal(0.01, '2026-06-02 15:00:00');
+    $signal->update(['origin' => 'model']);
+    app(TradeEngine::class)->createForSignal($signal);
+
+    tradeBar($signal->ticker_id, '2026-06-02', 1.00, 1.05, 0.95, 1.00); // signal day
+    tradeBar($signal->ticker_id, '2026-06-03', 1.00, 1.30, 0.98, 1.20); // entry day
+
+    // Entry day 2026-06-03: 9:30 ET = 13:30 UTC. 30 ascending minutes,
+    // rising from 1.00 to ~1.10 — holds above VWAP, no gap fade.
+    $minutes = collect(range(0, 29))->map(fn (int $i): array => [
+        't' => (strtotime('2026-06-03 13:30:00 UTC') + $i * 60) * 1000,
+        'o' => 1.00 + $i * 0.003, 'h' => 1.01 + $i * 0.003,
+        'l' => 0.995 + $i * 0.003, 'c' => 1.005 + $i * 0.003,
+        'v' => 10_000,
+    ])->all();
+
+    Http::fake([
+        'api.polygon.io/*' => Http::response(['results' => $minutes]),
+    ]);
+    config(['pennyhunt.polygon.api_key' => 'test']);
+
+    app(TradeEngine::class)->sync();
+
+    $trade = SignalTrade::where('book', 'moonshot')->first();
+    // 10:00 fill = open × (1 + or_return_30m), not the 1.00 session open.
+    expect($trade->status)->toBe('open')
+        ->and((float) $trade->entry_price)->toBeGreaterThan(1.05);
+});
+
+it('moonshot book vetoes the entry when the opening gap fades', function () {
+    tradeModel();
+    $signal = tradeSignal(0.01, '2026-06-02 15:00:00');
+    $signal->update(['origin' => 'model']);
+    app(TradeEngine::class)->createForSignal($signal);
+
+    tradeBar($signal->ticker_id, '2026-06-02', 1.00, 1.05, 0.95, 1.00); // signal day, close 1.00
+    tradeBar($signal->ticker_id, '2026-06-03', 1.10, 1.12, 0.90, 0.95); // entry day gaps up then dies
+
+    // Opens +10% above prior close, fades through it within 30 minutes.
+    $minutes = collect(range(0, 29))->map(fn (int $i): array => [
+        't' => (strtotime('2026-06-03 13:30:00 UTC') + $i * 60) * 1000,
+        'o' => 1.10 - $i * 0.006, 'h' => 1.11 - $i * 0.006,
+        'l' => 1.09 - $i * 0.006, 'c' => 1.095 - $i * 0.006,
+        'v' => 10_000,
+    ])->all();
+
+    Http::fake([
+        'api.polygon.io/*' => Http::response(['results' => $minutes]),
+    ]);
+    config(['pennyhunt.polygon.api_key' => 'test']);
+
+    app(TradeEngine::class)->sync();
+
+    $trade = SignalTrade::where('book', 'moonshot')->first();
+    expect($trade->status)->toBe('cancelled')
+        ->and($trade->exit_reason)->toBe('or_veto');
 });
 
 it('phase-e book exits when the crowd collapses', function () {

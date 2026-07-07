@@ -8,6 +8,8 @@ use App\Models\MarketBar;
 use App\Models\Signal;
 use App\Models\SignalModel;
 use App\Models\SignalTrade;
+use App\Services\Features\Day0Features;
+use App\Services\MarketData\PolygonClient;
 use App\Support\AlertMailer;
 use App\Support\AnalyticsGate;
 use Illuminate\Support\Collection;
@@ -28,6 +30,8 @@ class TradeEngine
 {
     /** Entry must materialize within this many days of the fire or the trade is void. */
     protected const ENTRY_TIMEOUT_DAYS = 7;
+
+    public function __construct(protected PolygonClient $polygon) {}
 
     /**
      * Open a pending paper trade when the signal scores at/above the active
@@ -176,6 +180,28 @@ class TradeEngine
             }
         }
 
+        // Moonshot book: opening-range confirmation (Phase G). Only fill
+        // when the entry session's first 30 minutes held above VWAP and the
+        // gap didn't fade — and then fill at the 10:00 price, not the open
+        // (confirmation isn't free). Run-36 lab, 10:00 fills: moonshot cell
+        // +25.5% vs +6.4% net (n=6, directional); composite cell PF 0.94 →
+        // 1.10 (n=254 → 101) — the filter helps in BOTH cells. Missing
+        // minute data → plain open fill (never veto on absent evidence).
+        if ($trade->book === 'moonshot') {
+            $confirmation = $this->openingRangeConfirmation($trade, $entryBar);
+
+            if ($confirmation === false) {
+                $trade->update(['status' => 'cancelled', 'exit_reason' => 'or_veto']);
+                TradeUpdated::dispatch($trade, 'cancelled');
+
+                return;
+            }
+
+            if (is_float($confirmation) && $confirmation > 0) {
+                $entry = $confirmation;
+            }
+        }
+
         $trade->update([
             'status' => 'open',
             'entry_date' => $entryBar->bucket_start->toDateString(),
@@ -189,6 +215,45 @@ class TradeEngine
         TradeUpdated::dispatch($trade, 'opened');
 
         $this->walkExits($trade->refresh());
+    }
+
+    /**
+     * Entry-day opening-range check for the moonshot book.
+     *
+     * @return float|false|null the 10:00 fill price when confirmed, false
+     *                          when the tape vetoed, null when unreadable
+     */
+    protected function openingRangeConfirmation(SignalTrade $trade, MarketBar $entryBar): float|false|null
+    {
+        $entryDate = $entryBar->bucket_start->toDateString();
+
+        $minutes = rescue(fn () => $this->polygon->minuteBars($trade->ticker->symbol, $entryDate), [], report: false);
+
+        if ($minutes === []) {
+            return null;
+        }
+
+        $prevClose = (float) (MarketBar::query()
+            ->where('ticker_id', $trade->ticker_id)
+            ->where('interval', '1d')
+            ->whereDate('bucket_start', '<', $entryDate)
+            ->orderByDesc('bucket_start')
+            ->value('close') ?? 0) ?: null;
+
+        $day0 = Day0Features::compute($minutes, $prevClose, null);
+
+        if ($day0['or_return_30m'] === null) {
+            return null; // too thin to read — fall back to the open fill
+        }
+
+        $confirmed = ($day0['vwap_dist_30m'] === null || $day0['vwap_dist_30m'] >= 0)
+            && $day0['gap_faded'] !== true;
+
+        if (! $confirmed) {
+            return false;
+        }
+
+        return round((float) $entryBar->open * (1 + (float) $day0['or_return_30m']), 4);
     }
 
     /**

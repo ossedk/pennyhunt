@@ -14,7 +14,7 @@
 | Arctic Shift (Reddit archive) | **Working** | None | Historical backfill for backtests; verified live 2026-07-03 |
 | Yahoo chart API (daily OHLC) | **Working** | None | Keyless daily bars → `market_bars`; powers backtests + signal grading |
 | FMP (market data) | Optional — needs key | `FMP_API_KEY` | Ticker enrichment (exchange/price); no longer required for grading |
-| Stocktwits | Skipped | — | API frozen to new developers (2026) |
+| Stocktwits | **Working** (Phase G) | None | Public streams API (no key): trending + loud-ticker symbol streams every 15 min (~44 req/hr vs ~200/hr limit). Verified live 2026-07-07: 312 posts / 498 mentions on first pull. Structured symbol tags → cashtag-tier mentions (≤6/message tag-spam guard); `StocktwitsIngestor` + `PollStocktwits`. The partner API is frozen to new developers, but the unauthenticated read endpoints remain open |
 | X/Twitter via Apify | **Built — off by default** | `APIFY_KEY` + `PENNYHUNT_TWITTER_ENABLED` | Targeted cashtag confirmation; requires a paid Apify plan |
 
 ## Reddit via Apify — primary path (live)
@@ -165,6 +165,14 @@ trakstocks, SqueezePlays, OTCstocks.
 - `GET /api/v3/stock/list` — exchange + price enrichment for the universe.
 - `GET /api/v3/historical-price-full/{symbol}` — daily closes for signal grading.
 - Starter plan (~$19–29/mo) is sufficient for Phase 1–3.
+
+### Stocktwits (`App\Services\Ingestion\StocktwitsIngestor`, `App\Jobs\Ingestion\PollStocktwits`) — free, keyless
+
+- `GET api.stocktwits.com/api/2/streams/trending.json` — 30 trending messages, every 15 min.
+- `GET api.stocktwits.com/api/2/streams/symbol/{SYM}.json` — per-symbol stream for the 10 loudest tickers of the last 24h.
+- Messages carry structured `symbols` tags (author-explicit) → mentions at cashtag confidence 1.0, capped at 6 symbols per message.
+- Author followers/ideas land in `authors.stats`; the message's self-declared Bullish/Bearish flag is kept in `raw_posts.meta.sentiment`.
+- `TickerExtractor` treats `stocktwits` like `twitter` (cashtags only) — bare-word extraction is off for shout-heavy platforms.
 
 ## X/Twitter via Apify — built, disabled by default
 
